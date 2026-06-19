@@ -1,0 +1,16 @@
+venv/
+.env
+__pycache__/
+*.pyc
+*.pyo
+data/faiss_index/
+data/chroma_db/
+data/invoices/
+*.db
+node_modules/
+package-lock.json
+package.json
+*.docx
+*.pdf
+.DS_Store
+Thumbs.db
