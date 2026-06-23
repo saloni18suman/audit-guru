@@ -8,7 +8,7 @@ from config import load_config
 load_config()
 from pipeline import process_invoice
 from db import init_db, save_result, load_all_results, save_review, save_corrections, get_audit_trail, delete_result
-from s3_store import upload_invoice, get_download_url, is_available as s3_available
+from s3_store import upload_invoice, get_presigned_url, is_available as s3_available
 
 init_db()
 APP_NAME = os.environ.get("APP_NAME", "Audit Guru")
@@ -798,8 +798,12 @@ with t3:
                 with st.expander(f"{eo.get('vendor','Unknown')}  ·  {eo.get('invoice_id','-')}  ·  ${eo.get('amount',0):,.2f}  ·  {eff}", expanded=False):
 
                     # ── PDF preview ───────────────────────────────────────────
-                    if s3u:
-                        st.markdown(f'<iframe src="{s3u}" width="100%" height="480" style="border:1px solid #b8d4f0;border-radius:8px;margin-bottom:12px;"></iframe>', unsafe_allow_html=True)
+                    if s3u and s3k:
+                        try:
+                            _pdf_url = get_presigned_url(s3k, expires_in=1800)
+                            st.markdown(f'<iframe src="{_pdf_url}" width="100%" height="480" style="border:1px solid #b8d4f0;border-radius:8px;margin-bottom:12px;"></iframe>', unsafe_allow_html=True)
+                        except Exception:
+                            st.markdown(f'<div style="font-size:.8rem;color:#718096;padding:8px 0;">PDF stored at <code>{s3k}</code></div>', unsafe_allow_html=True)
 
                     itab1, itab2, itab3 = st.tabs(["📋  Details", "✏️  Correct Fields", "🕐  Audit Trail"])
 
