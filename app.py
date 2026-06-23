@@ -656,13 +656,28 @@ with t2:
                 '<span><strong>S3 unavailable</strong> — run <code>docker compose up -d</code> to enable storage.</span></div>',
                 unsafe_allow_html=True)
 
-        uploaded = st.file_uploader("Drop PDF invoice files here", type=["pdf"], accept_multiple_files=True, key=f"pdf_up_{st.session_state.uploader_key}")
+        uploaded = st.file_uploader("Upload PDF invoices only", type=["pdf"], accept_multiple_files=True, key=f"pdf_up_{st.session_state.uploader_key}")
+
+        # Validate each file is actually a PDF (check magic bytes)
+        invalid = []
+        valid = []
         if uploaded:
+            for f in uploaded:
+                header = f.read(4)
+                f.seek(0)
+                if header != b"%PDF":
+                    invalid.append(f.name)
+                else:
+                    valid.append(f)
+            if invalid:
+                st.error(f"Not a valid PDF: {', '.join(invalid)}. Only real PDF files are accepted.")
+
+        if valid:
             if st.button("Run Audit Pipeline", type="primary"):
                 prog = st.progress(0, text="Initialising…")
                 status_out = st.empty()
-                for i, f in enumerate(uploaded):
-                    prog.progress(i/len(uploaded), text=f"Processing {f.name}…")
+                for i, f in enumerate(valid):
+                    prog.progress(i/len(valid), text=f"Processing {f.name}…")
                     file_bytes = f.read()
                     s3_key, s3_url = None, None
                     if s3_ok:
@@ -700,7 +715,7 @@ with t2:
                 st.success("All invoices processed. View results in the Invoices tab.")
                 st.session_state.uploader_key += 1
                 st.rerun()
-        else:
+        if not uploaded:
             if not st.session_state.results:
                 st.markdown('<div class="empty-state"><div class="empty-icon">'+svg("upload",40,"#7eb8e8")+'</div><div style="font-size:.92rem;color:#718096;">Upload one or more PDF invoices above to begin.</div></div>', unsafe_allow_html=True)
             else:
