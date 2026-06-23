@@ -2,10 +2,10 @@ import io, os, sys, tempfile
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
+from config import load_config
+load_config()
 from pipeline import process_invoice
 from db import init_db, save_result, load_all_results, save_review, save_corrections, get_audit_trail, delete_result
 from s3_store import upload_invoice, get_download_url, is_available as s3_available
