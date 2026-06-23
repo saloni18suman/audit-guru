@@ -1,0 +1,53 @@
+COMPANY EXPENSE POLICY
+======================
+
+1. TRAVEL EXPENSES
+   - Flights: Economy class only for trips under 6 hours. Business class allowed for trips over 6 hours.
+   - Maximum daily meal allowance: $75 per day.
+   - Hotel accommodation: Maximum $200 per night for domestic travel, $300 for international.
+   - Ground transportation: Taxis/rideshares allowed; personal vehicle mileage reimbursed at $0.67/mile.
+   - Travel insurance required for international trips over 5 days.
+
+2. MEALS AND ENTERTAINMENT
+   - Business meals with clients: Maximum $150 per person; requires attendee list and business purpose.
+   - Team meals/events: Maximum $50 per person; requires manager pre-approval over $500 total.
+   - Alcohol is not reimbursable unless explicitly approved by VP-level or above.
+   - Fast food and delivery apps capped at $25 per meal.
+
+3. OFFICE SUPPLIES AND EQUIPMENT
+   - Office supplies under $50: No pre-approval needed; submit receipt.
+   - Equipment (laptops, monitors, etc.): Requires IT department approval before purchase.
+   - Software subscriptions: Must be approved by department head and IT security review.
+   - Maximum single purchase without PO: $500.
+
+4. VENDOR CATEGORIES
+   - Approved vendor categories: Travel, Accommodation, Meals, Office Supplies, Software, Professional Services.
+   - Unapproved categories: Personal items, Gifts (unless client-approved), Gambling, Adult entertainment.
+   - Vendors must be registered in the approved vendor list for invoices over $1,000.
+
+5. INVOICE AND SUBMISSION REQUIREMENTS
+   - All expenses must be submitted within 30 days of the transaction date.
+   - Original receipts required for expenses over $25.
+   - Invoices must include: vendor name, date, itemized description, total amount, and tax ID.
+   - Duplicate invoices will be rejected; each invoice number must be unique.
+   - Foreign currency invoices must include exchange rate documentation.
+
+6. APPROVAL THRESHOLDS
+   - Under $100: Employee self-approval with manager notification.
+   - $100–$500: Direct manager approval required.
+   - $500–$2,000: Department head approval required.
+   - Over $2,000: Finance VP approval required.
+   - Emergency purchases over $5,000: CEO approval required.
+
+7. PROHIBITED EXPENSES
+   - Personal travel add-ons (seat upgrades using company funds for personal reasons).
+   - Fines, penalties, or legal fees not related to company business.
+   - Charitable donations (handled through separate CSR budget).
+   - Expenses for family members unless specifically authorized.
+   - Cash advances without prior written approval.
+
+8. FRAUD AND COMPLIANCE
+   - Submitting false or inflated expense claims is grounds for immediate termination.
+   - All expenses are subject to audit by the Finance and Compliance teams.
+   - Repeated policy violations will result in loss of expense privileges.
+   - Employees must disclose any vendor relationships or conflicts of interest.
