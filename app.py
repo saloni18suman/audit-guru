@@ -908,13 +908,15 @@ with t4:
             if _role in ("Admin","Reviewer"):
                 with rq_ba:
                     if st.button("✓ Approve All", key="bulk_approve", use_container_width=True, type="primary"):
-                        for _r in pending:
-                            save_review(_r["db_id"],"APPROVED","Bulk approved")
+                        conflicts = [_r["db_id"] for _r in pending if not save_review(_r["db_id"],"APPROVED","Bulk approved",_r.get("version",1))]
+                        if conflicts:
+                            st.warning(f"{len(conflicts)} record(s) were modified by another user and skipped.")
                         st.session_state.results=load_all_results(); st.rerun()
                 with rq_br:
                     if st.button("✕ Reject All", key="bulk_reject", use_container_width=True):
-                        for _r in pending:
-                            save_review(_r["db_id"],"REJECTED","Bulk rejected")
+                        conflicts = [_r["db_id"] for _r in pending if not save_review(_r["db_id"],"REJECTED","Bulk rejected",_r.get("version",1))]
+                        if conflicts:
+                            st.warning(f"{len(conflicts)} record(s) were modified by another user and skipped.")
                         st.session_state.results=load_all_results(); st.rerun()
             st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
@@ -968,11 +970,15 @@ with t4:
                     b1, b2, _ = st.columns([1,1,6])
                     with b1:
                         if st.button("✓  Approve", key=f"ap_{db_id}", type="primary"):
-                            save_review(db_id,"APPROVED",st.session_state.get(nk,""))
+                            ok = save_review(db_id,"APPROVED",st.session_state.get(nk,""),result.get("version",1))
+                            if not ok:
+                                st.warning("This record was updated by someone else. Refresh and try again.")
                             st.session_state.results=load_all_results(); st.rerun()
                     with b2:
                         if st.button("✕  Reject", key=f"re_{db_id}", type="secondary"):
-                            save_review(db_id,"REJECTED",st.session_state.get(nk,""))
+                            ok = save_review(db_id,"REJECTED",st.session_state.get(nk,""),result.get("version",1))
+                            if not ok:
+                                st.warning("This record was updated by someone else. Refresh and try again.")
                             st.session_state.results=load_all_results(); st.rerun()
                 else:
                     st.markdown('<span style="font-size:.78rem;color:#a0aec0;font-style:italic;">View only — Reviewer or Admin role required to make decisions.</span>', unsafe_allow_html=True)
