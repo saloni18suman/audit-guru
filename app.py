@@ -7,8 +7,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import load_config
 load_config()
 from db import init_db, load_all_results, save_review, save_corrections, get_audit_trail, save_queued_job
-from s3_store import upload_invoice, get_presigned_url, is_available as s3_available
+from s3_store import upload_invoice, get_presigned_url
 from sqs_queue import send_job, queue_depth
+from agents.summarization_agent import generate_summary
 
 init_db()
 APP_NAME = os.environ.get("APP_NAME", "Audit Guru")
@@ -641,23 +642,6 @@ with t2:
         </div>
         """, unsafe_allow_html=True)
 
-        s3_ok = s3_available()
-        s3_bucket = os.environ.get("S3_BUCKET_NAME", "audit-guru-invoices")
-        if s3_ok:
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'
-                f'background:#f0fff4;border:1px solid #9ae6b4;border-radius:8px;margin-bottom:16px;font-size:.83rem;color:#276749;">'
-                f'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
-                f'<span><strong>S3 connected</strong> — uploads stored in <code>{s3_bucket}</code></span></div>',
-                unsafe_allow_html=True)
-        else:
-            st.markdown(
-                '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'
-                'background:#fffbeb;border:1px solid #f6e05e;border-radius:8px;margin-bottom:16px;font-size:.83rem;color:#744210;">'
-                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-                '<span><strong>S3 unavailable</strong> — run <code>docker compose up -d</code> to enable storage.</span></div>',
-                unsafe_allow_html=True)
-
         uploaded = st.file_uploader("Upload PDF invoices only", type=["pdf"], accept_multiple_files=True, key=f"pdf_up_{st.session_state.uploader_key}")
 
         # Validate each file is actually a PDF (check magic bytes)
@@ -1024,23 +1008,191 @@ with t5:
     if not rs_done:
         st.markdown('<div class="empty-state">'+svg("bar",44,"#7eb8e8")+'<div class="empty-txt">No data to report yet.</div></div>', unsafe_allow_html=True)
     else:
-        approved_l=[r for r in rs_done if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED"]
-        rejected_l=[r for r in rs_done if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED"]
-        pending_l =[r for r in rs_done if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision")]
-        ta=sum(r["ocr"].get("amount",0) for r in approved_l)
-        tr=sum(r["ocr"].get("amount",0) for r in rejected_l)
-        tv=sum(r["ocr"].get("amount",0) for r in rs_done)
+        approved_l = [r for r in rs_done if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED"]
+        rejected_l = [r for r in rs_done if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED"]
+        pending_l  = [r for r in rs_done if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision")]
+        ta = sum(r["ocr"].get("amount",0) for r in approved_l)
+        tr = sum(r["ocr"].get("amount",0) for r in rejected_l)
+        tv = sum(r["ocr"].get("amount",0) for r in rs_done)
 
-        c1,c2,c3,c4=st.columns(4)
-        c1.metric("Total Value", f"${tv:,.2f}"); c2.metric("Approved", f"${ta:,.2f}", f"{len(approved_l)} invoices")
-        c3.metric("Rejected", f"${tr:,.2f}", f"{len(rejected_l)} invoices"); c4.metric("Pending", len(pending_l))
+        rows_data = [{"File":r["filename"],"Invoice ID":r["ocr"].get("invoice_id","-"),"Vendor":r["ocr"].get("vendor","-"),"Amount":r["ocr"].get("amount",0),"Category":r["ocr"].get("category","-"),"Validation":r["validation"].get("validation_status","-"),"Audit":r["audit"].get("audit_status","-"),"Risk":r["audit"].get("risk_level","-"),"Flags":len(r["validation"].get("flags",[])),"Reviewer":r.get("review_decision") or ""} for r in rs_done]
 
-        hc,dc=st.columns([5,1])
-        with dc:
-            rows_data=[{"File":r["filename"],"Invoice ID":r["ocr"].get("invoice_id","-"),"Vendor":r["ocr"].get("vendor","-"),"Amount":r["ocr"].get("amount",0),"Category":r["ocr"].get("category","-"),"Validation":r["validation"].get("validation_status","-"),"Audit":r["audit"].get("audit_status","-"),"Risk":r["audit"].get("risk_level","-"),"Flags":len(r["validation"].get("flags",[])),"Reviewer":r.get("review_decision") or ""} for r in rs_done]
-            st.download_button("↓ Export CSV", pd.DataFrame(rows_data).to_csv(index=False).encode(),"audit_results.csv","text/csv",use_container_width=True, key="dl_reports")
+        # ── Header KPIs + export ─────────────────────────────────────────────
+        k1,k2,k3,k4,k5 = st.columns(5)
+        k1.metric("Total Value",   f"${tv:,.2f}")
+        k2.metric("Approved",      f"${ta:,.2f}",  f"{len(approved_l)} invoices")
+        k3.metric("Rejected",      f"${tr:,.2f}",  f"{len(rejected_l)} invoices")
+        k4.metric("Pending",       len(pending_l))
+        k5.metric("Flagged",       sum(1 for r in rs_done if r["validation"].get("flags")))
+
+        ec1, ec2 = st.columns([1,1])
+        with ec1:
+            st.download_button("↓ Export CSV", pd.DataFrame(rows_data).to_csv(index=False).encode(), "audit_results.csv", "text/csv", use_container_width=True, key="dl_rep_csv")
+        with ec2:
+            _buf2 = io.BytesIO()
+            pd.DataFrame(rows_data).to_excel(_buf2, index=False, engine="openpyxl")
+            st.download_button("↓ Export XLSX", _buf2.getvalue(), "audit_results.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True, key="dl_rep_xl")
+
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+        # ── AI Narrative Summary ─────────────────────────────────────────────
+        st.markdown('<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;letter-spacing:.09em;margin-bottom:10px;">AI Executive Summary</div>', unsafe_allow_html=True)
+        if "ai_summary" not in st.session_state:
+            st.session_state.ai_summary = ""
+        if st.button("Generate AI Summary", type="primary", key="gen_summary"):
+            with st.spinner("Generating summary…"):
+                st.session_state.ai_summary = generate_summary(rs_done)
+        if st.session_state.ai_summary:
+            st.markdown(
+                f'<div class="box-blue" style="font-size:.9rem;line-height:1.75;">'
+                f'{st.session_state.ai_summary}</div>',
+                unsafe_allow_html=True)
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.divider()
+
+        # ── Vendor Summary ───────────────────────────────────────────────────
+        st.markdown('<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;letter-spacing:.09em;margin:14px 0 10px;">Vendor Summary</div>', unsafe_allow_html=True)
+        vendor_map: dict = {}
+        for r in rs_done:
+            o = r["ocr"]; a = r["audit"]
+            v = o.get("vendor") or "Unknown"
+            dec = r.get("review_decision") or a.get("audit_status","")
+            if v not in vendor_map:
+                vendor_map[v] = {"count":0,"total":0.0,"approved":0,"rejected":0,"flagged":0}
+            vendor_map[v]["count"]   += 1
+            vendor_map[v]["total"]   += float(o.get("amount",0) or 0)
+            if dec == "APPROVED":   vendor_map[v]["approved"] += 1
+            elif dec == "REJECTED": vendor_map[v]["rejected"] += 1
+            if r["validation"].get("flags"): vendor_map[v]["flagged"] += 1
+        vs = sorted(vendor_map.items(), key=lambda x: x[1]["total"], reverse=True)
+        st.markdown(
+            '<table class="tbl"><thead><tr>'
+            '<th>Vendor</th><th>Invoices</th><th>Total Spend</th><th>Avg Invoice</th>'
+            '<th>Approved</th><th>Rejected</th><th>Flagged</th>'
+            '</tr></thead><tbody>'
+            + "".join(
+                f'<tr><td class="t-v">{vn}</td>'
+                f'<td>{d["count"]}</td>'
+                f'<td class="t-amt">${d["total"]:,.2f}</td>'
+                f'<td>${d["total"]/d["count"]:,.2f}</td>'
+                f'<td style="color:#22543d;font-weight:700;">{d["approved"]}</td>'
+                f'<td style="color:#742a2a;font-weight:700;">{d["rejected"]}</td>'
+                f'<td style="color:#975a16;font-weight:700;">{d["flagged"]}</td></tr>'
+                for vn, d in vs)
+            + '</tbody></table>',
+            unsafe_allow_html=True)
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.divider()
+
+        # ── Category Summary ─────────────────────────────────────────────────
+        st.markdown('<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;letter-spacing:.09em;margin:14px 0 10px;">Category Summary</div>', unsafe_allow_html=True)
+        cat_map: dict = {}
+        for r in rs_done:
+            o = r["ocr"]
+            c = o.get("category") or "Other"
+            cat_map[c] = cat_map.get(c, {"count":0,"total":0.0})
+            cat_map[c]["count"] += 1
+            cat_map[c]["total"] += float(o.get("amount",0) or 0)
+        cs = sorted(cat_map.items(), key=lambda x: x[1]["total"], reverse=True)
+        st.markdown(
+            '<table class="tbl"><thead><tr>'
+            '<th>Category</th><th>Invoices</th><th>Total Spend</th><th>% of Total</th><th>Avg Invoice</th>'
+            '</tr></thead><tbody>'
+            + "".join(
+                f'<tr><td class="t-v">{cn}</td>'
+                f'<td>{d["count"]}</td>'
+                f'<td class="t-amt">${d["total"]:,.2f}</td>'
+                f'<td>{d["total"]/tv*100:.1f}%</td>'
+                f'<td>${d["total"]/d["count"]:,.2f}</td></tr>'
+                for cn, d in cs)
+            + '</tbody></table>',
+            unsafe_allow_html=True)
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.divider()
+
+        # ── Period Summary (by month) ────────────────────────────────────────
+        st.markdown('<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;letter-spacing:.09em;margin:14px 0 10px;">Monthly Summary</div>', unsafe_allow_html=True)
+        month_map: dict = {}
+        for r in rs_done:
+            raw_date = r["ocr"].get("date","")
+            month = raw_date[:7] if raw_date and len(raw_date) >= 7 else "Unknown"
+            if month not in month_map:
+                month_map[month] = {"count":0,"total":0.0,"flagged":0}
+            month_map[month]["count"]  += 1
+            month_map[month]["total"]  += float(r["ocr"].get("amount",0) or 0)
+            if r["validation"].get("flags"): month_map[month]["flagged"] += 1
+        ms = sorted(month_map.items(), key=lambda x: x[0])
+        st.markdown(
+            '<table class="tbl"><thead><tr>'
+            '<th>Month</th><th>Invoices</th><th>Total Spend</th><th>Avg Invoice</th><th>Flagged</th>'
+            '</tr></thead><tbody>'
+            + "".join(
+                f'<tr><td class="t-v">{mn}</td>'
+                f'<td>{d["count"]}</td>'
+                f'<td class="t-amt">${d["total"]:,.2f}</td>'
+                f'<td>${d["total"]/d["count"]:,.2f}</td>'
+                f'<td style="color:#975a16;font-weight:700;">{d["flagged"]}</td></tr>'
+                for mn, d in ms)
+            + '</tbody></table>',
+            unsafe_allow_html=True)
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        st.divider()
+
+        # ── Exception Summary ────────────────────────────────────────────────
+        st.markdown('<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;letter-spacing:.09em;margin:14px 0 10px;">Exception Summary</div>', unsafe_allow_html=True)
+        flag_map: dict = {}
+        amount_at_risk = 0.0
+        for r in rs_done:
+            fl = r["validation"].get("flags",[])
+            if fl:
+                amount_at_risk += float(r["ocr"].get("amount",0) or 0)
+            for f in fl:
+                key = f.split(":")[0]
+                flag_map[key] = flag_map.get(key,{"count":0,"amount":0.0})
+                flag_map[key]["count"]  += 1
+                flag_map[key]["amount"] += float(r["ocr"].get("amount",0) or 0)
+        ex1, ex2 = st.columns(2)
+        with ex1:
+            st.markdown(
+                f'<div class="kpi" style="margin-bottom:0;">'
+                f'<div class="kpi-lbl">Amount at Risk</div>'
+                f'<div class="kpi-val" style="color:#e53e3e;">${amount_at_risk:,.2f}</div>'
+                f'<div class="kpi-foot">{sum(1 for r in rs_done if r["validation"].get("flags"))} invoices with violations</div>'
+                f'</div>',
+                unsafe_allow_html=True)
+        with ex2:
+            high_risk_amt = sum(float(r["ocr"].get("amount",0) or 0) for r in rs_done if r["audit"].get("risk_level")=="HIGH")
+            st.markdown(
+                f'<div class="kpi" style="margin-bottom:0;">'
+                f'<div class="kpi-lbl">High Risk Exposure</div>'
+                f'<div class="kpi-val" style="color:#c53030;">${high_risk_amt:,.2f}</div>'
+                f'<div class="kpi-foot">{sum(1 for r in rs_done if r["audit"].get("risk_level")=="HIGH")} high-risk invoices</div>'
+                f'</div>',
+                unsafe_allow_html=True)
+        if flag_map:
+            st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+            fs = sorted(flag_map.items(), key=lambda x: x[1]["count"], reverse=True)
+            st.markdown(
+                '<table class="tbl"><thead><tr>'
+                '<th>Violation Type</th><th>Occurrences</th><th>Amount Affected</th>'
+                '</tr></thead><tbody>'
+                + "".join(
+                    f'<tr><td><span class="flag-code">{fn}</span></td>'
+                    f'<td style="font-weight:700;color:#e53e3e;">{d["count"]}</td>'
+                    f'<td class="t-amt">${d["amount"]:,.2f}</td></tr>'
+                    for fn, d in fs)
+                + '</tbody></table>',
+                unsafe_allow_html=True)
+        else:
+            st.markdown('<div style="padding:20px;text-align:center;color:#48bb78;font-size:.88rem;">No exceptions found.</div>', unsafe_allow_html=True)
 
         st.divider()
+
+        # ── Invoice list by status ───────────────────────────────────────────
         for section, items, col in [("✅ Approved",approved_l,"#22543d"),("❌ Rejected",rejected_l,"#742a2a"),("⏳ Pending Review",pending_l,"#744210")]:
             if not items: continue
             st.markdown(f'<div style="font-size:.72rem;font-weight:700;color:{col};text-transform:uppercase;letter-spacing:.09em;margin:18px 0 10px;">{section} — {len(items)} invoice{"s" if len(items)!=1 else ""}</div>', unsafe_allow_html=True)

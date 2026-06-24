@@ -1,6 +1,6 @@
 # Audit Guru
 
-AI-powered invoice audit system that processes PDF invoices through an OCR → Validation → Audit pipeline and presents results in a review dashboard.
+AI-powered invoice audit platform. Bulk-upload PDF invoices, run them through an OCR → Validation → Audit pipeline via an async queue, and review results in a role-gated dashboard backed by AWS.
 
 ---
 
@@ -10,16 +10,14 @@ AI-powered invoice audit system that processes PDF invoices through an OCR → V
 2. [Architecture](#architecture)
 3. [Project Structure](#project-structure)
 4. [Pipeline](#pipeline)
-   - [OCR Agent](#1-ocr-agent)
-   - [Validation Agent](#2-validation-agent)
-   - [Audit Agent](#3-audit-agent)
-   - [RAG Policy Store](#rag-policy-store)
-5. [Data Storage](#data-storage)
-6. [Frontend](#frontend)
-7. [Configuration](#configuration)
-8. [Setup & Installation](#setup--installation)
-9. [Running the App](#running-the-app)
-10. [API Reference](#api-reference)
+5. [Queue System](#queue-system)
+6. [Data Storage](#data-storage)
+7. [File Storage](#file-storage)
+8. [Frontend](#frontend)
+9. [Roles & Access](#roles--access)
+10. [Configuration](#configuration)
+11. [Setup & Installation](#setup--installation)
+12. [Running the App](#running-the-app)
 
 ---
 
@@ -27,41 +25,44 @@ AI-powered invoice audit system that processes PDF invoices through an OCR → V
 
 Audit Guru automates the expense invoice review workflow:
 
-1. A user uploads one or more PDF invoices.
-2. The pipeline extracts structured data (OCR), validates it against policy rules, then sends it to an LLM for an audit decision enriched with company policy context via RAG.
-3. Results are persisted in SQLite and displayed in a dashboard with charts, an invoice table, and a human review queue for flagged invoices.
+1. Admin uploads one or more PDF invoices — files go straight to **S3**, jobs land in **SQS**.
+2. A background **queue worker** pulls each job, runs the audit pipeline (OCR → Validation → Audit), and writes results to **DynamoDB**.
+3. Reviewers approve or reject flagged invoices in the dashboard. All decisions are captured in an immutable **audit trail**.
+4. The Reports tab generates per-vendor, per-category, monthly, exception, and AI-written executive summaries.
 
-**Tech stack:** Python · Streamlit · LangGraph · Groq (Llama 3.3 70B) · pdfplumber · FAISS · sentence-transformers · SQLite · Plotly · LocalStack S3 (boto3)
+**Tech stack:** Python · Streamlit · LangGraph · Groq (Llama 3.3 70B) · pdfplumber · FAISS · sentence-transformers · AWS S3 · AWS DynamoDB · AWS SQS · AWS SSM Parameter Store · Plotly · openpyxl
 
 ---
 
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────┐
-│                  Streamlit UI (app.py)            │
-│  Dashboard │ Upload │ Review Queue │ Reports      │
-└───────────────────┬──────────────────────────────┘
-                    │ process_invoice()
-                    ▼
-┌──────────────────────────────────────────────────┐
-│           LangGraph Pipeline (pipeline.py)        │
-│                                                   │
-│   ┌─────────┐   ┌────────────┐   ┌─────────────┐ │
-│   │   OCR   │──▶│ Validation │──▶│    Audit    │ │
-│   │  Agent  │   │   Agent    │   │    Agent    │ │
-│   └────┬────┘   └─────┬──────┘   └──────┬──────┘ │
-│        │              │                  │        │
-│   pdfplumber    Policy rules        Groq LLM      │
-│   + Groq LLM                        + RAG         │
-└──────────────────────────────────────────────────┘
-                    │
-                    ▼
-          SQLite (audit.db)
-          Session state cache
+Browser (Streamlit UI)
+        │
+        │ 1. Upload PDFs
+        ▼
+   app.py (Upload tab)
+        │
+        ├─── upload_invoice() ──► S3 bucket (invoices/YYYY-MM-DD/<uuid>_file.pdf)
+        ├─── save_queued_job() ─► DynamoDB (status = QUEUED)
+        └─── send_job() ────────► SQS Queue (audit-guru-jobs)
+                                        │
+                              queue_worker.py (separate process)
+                                        │
+                              ┌─────────▼──────────┐
+                              │  LangGraph Pipeline  │
+                              │  OCR → Validate → Audit │
+                              └─────────┬──────────┘
+                                        │
+                              update_queued_job() ──► DynamoDB (status = DONE)
+
+UI polls DynamoDB for status updates (↻ Refresh button)
 ```
 
-State flows through a `TypedDict` (`PipelineState`). Each node receives the full state, enriches it, and passes it to the next node. If any node sets `error`, downstream nodes skip processing.
+**CAP positioning: CP (Consistent + Partition Tolerant)**
+- All DynamoDB reads use `ConsistentRead=True`
+- All writes use optimistic locking via a `version` attribute + `ConditionExpression`
+- Single boto3 resource per process (connection reuse)
 
 ---
 
@@ -69,235 +70,277 @@ State flows through a `TypedDict` (`PipelineState`). Each node receives the full
 
 ```
 capstone/
-├── app.py                  # Streamlit frontend (4 tabs)
-├── pipeline.py             # LangGraph pipeline definition
-├── db.py                   # SQLite persistence layer
+├── app.py                       # Streamlit UI (5 tabs, login, role-based access)
+├── pipeline.py                  # LangGraph pipeline definition
+├── queue_worker.py              # SQS consumer — runs as a separate process
+│
 ├── agents/
-│   ├── ocr_agent.py        # PDF text extraction + LLM field extraction
-│   ├── validation_agent.py # Rule-based policy validation (no LLM)
-│   └── audit_agent.py      # LLM audit decision + RAG context
+│   ├── ocr_agent.py             # PDF text extraction + LLM field extraction
+│   ├── validation_agent.py      # Rule-based policy validation (no LLM)
+│   ├── audit_agent.py           # LLM audit decision + RAG context
+│   └── summarization_agent.py  # AI executive summary generator
+│
 ├── rag/
-│   ├── policy_rag.py       # FAISS vector store + similarity search
+│   ├── policy_rag.py            # Downloads policy from S3, builds FAISS index
 │   └── __init__.py
+│
 ├── data/
-│   ├── expense_policy.txt  # Company policy document (RAG source)
-│   └── faiss_index/        # Auto-generated vector index (gitignored)
-├── audit.db                # SQLite database (auto-created, gitignored)
+│   ├── expense_policy.txt       # Local fallback policy (authoritative copy is in S3)
+│   └── faiss_index/             # Auto-generated vector index (gitignored)
+│
+├── db.py                        # DynamoDB persistence layer (CAP-compliant)
+├── s3_store.py                  # S3 upload, presigned URL generation
+├── sqs_queue.py                 # SQS send / receive / delete / depth
+├── config.py                    # Loads secrets from SSM → falls back to .env
+├── push_secrets.py              # One-time script: pushes .env → SSM Parameter Store
+│
+├── generate_test_invoices.py    # Generates fake PDF invoices for testing
+├── test_pipeline.py             # Runs pipeline against a single test invoice
 ├── requirements.txt
-├── .env                    # Local secrets and config (gitignored)
-└── .env.example            # Config template
+├── .env                         # Local secrets (gitignored)
+└── .env.example                 # Config template
 ```
 
 ---
 
 ## Pipeline
 
-### 1. OCR Agent
+The pipeline is a LangGraph `StateGraph` that flows through three agents. State is a `TypedDict` (`PipelineState`). If any node sets `error`, downstream nodes skip.
 
-**File:** `agents/ocr_agent.py`
+### 1. OCR Agent — `agents/ocr_agent.py`
 
-Extracts raw text from a PDF using `pdfplumber`, then sends up to 3 000 characters to the Groq LLM to extract structured fields.
+Extracts raw text from a PDF using `pdfplumber`, sends up to 3 000 characters to Groq to extract structured fields.
 
-**Input:** `pdf_path: str`
-
-**Output:**
-
-| Field | Type | Description |
+| Output field | Type | Description |
 |---|---|---|
-| `invoice_id` | `str` | Invoice number, or `"UNKNOWN"` |
-| `vendor` | `str` | Vendor / supplier name |
-| `date` | `str` | Date in `YYYY-MM-DD` or original format |
-| `amount` | `float` | Total amount (no currency symbol) |
-| `currency` | `str` | 3-letter code, default `"USD"` |
-| `category` | `str` | One of: Travel, Accommodation, Meals, Office Supplies, Software, Professional Services, Other |
-| `line_items` | `list[dict]` | `[{description, amount}]` |
-| `confidence` | `float` | 0.0 – 1.0 extraction confidence |
-| `raw_text` | `str` | First 300 chars of extracted PDF text |
-| `source_file` | `str` | Original filename |
+| `invoice_id` | str | Invoice number or `"UNKNOWN"` |
+| `vendor` | str | Vendor / supplier name |
+| `date` | str | Date in `YYYY-MM-DD` |
+| `amount` | float | Total amount (no currency symbol) |
+| `currency` | str | 3-letter code, default `"USD"` |
+| `category` | str | Travel / Accommodation / Meals / Office Supplies / Software / Professional Services / Other |
+| `line_items` | list | `[{description, amount}]` |
+| `confidence` | float | 0.0 – 1.0 extraction confidence |
+
+### 2. Validation Agent — `agents/validation_agent.py`
+
+Pure Python — no LLM. Checks missing fields, duplicate detection, and policy violations.
+
+| Flag | Trigger |
+|---|---|
+| `MISSING_FIELD:<field>` | Empty / UNKNOWN / 0 on required fields |
+| `DUPLICATE_INVOICE_ID:<id>` | Exact invoice_id seen before |
+| `POSSIBLE_DUPLICATE` | Same vendor + amount + date, different ID |
+| `UNAPPROVED_CATEGORY:<cat>` | Category not in approved list |
+| `EXCEEDS_LIMIT:<cat>` | Amount over category spending limit |
+| `LATE_SUBMISSION:<n>_days` | Invoice date > 30 days ago |
+| `REQUIRES_FINANCE_VP_APPROVAL` | Amount > $2 000 |
+| `REQUIRES_DEPT_HEAD_APPROVAL` | Amount $500 – $2 000 |
+| `REQUIRES_MANAGER_APPROVAL` | Amount $100 – $500 |
+
+### 3. Audit Agent — `agents/audit_agent.py`
+
+Queries the RAG store for relevant policy sections, then sends invoice + flags + policy context to Groq for a final audit decision.
+
+| Output field | Type | Description |
+|---|---|---|
+| `audit_status` | str | `APPROVED` / `REJECTED` / `NEEDS_REVIEW` |
+| `reasoning` | str | 2–4 sentence explanation |
+| `recommendation` | str | One clear action |
+| `confidence` | float | 0.0 – 1.0 |
+| `policy_references` | list[str] | Policy sections cited |
+| `risk_level` | str | `LOW` / `MEDIUM` / `HIGH` |
+
+### 4. Summarization Agent — `agents/summarization_agent.py`
+
+On-demand — called from the Reports tab. Aggregates spend stats and sends them to Groq to produce a 3–5 sentence executive summary narrative.
+
+### RAG Policy Store — `rag/policy_rag.py`
+
+On startup, downloads `config/expense_policy.txt` from S3, builds a FAISS vector index using `all-MiniLM-L6-v2`. Falls back to the local `data/expense_policy.txt` if S3 is unreachable. Index is cached to `data/faiss_index/` after the first build.
+
+**To update the policy:** upload a new version to `s3://audit-guru-invoices/config/expense_policy.txt` and delete `data/faiss_index/`.
 
 ---
 
-### 2. Validation Agent
+## Queue System
 
-**File:** `agents/validation_agent.py`
-
-Pure Python — no LLM calls. Runs three checks in sequence:
-
-#### Missing Fields
-Flags any of `invoice_id`, `vendor`, `date`, `amount`, `category` that are empty, `"UNKNOWN"`, or `0`.
+Bulk uploads are non-blocking. Files land in S3 and SQS in seconds; the worker processes them independently.
 
 ```
-MISSING_FIELD:<field_name>
+app.py (Upload tab)
+  │
+  ├── upload_invoice()    →  S3: invoices/YYYY-MM-DD/<uuid>_filename.pdf
+  ├── save_queued_job()   →  DynamoDB: status = QUEUED
+  └── send_job()         →  SQS: audit-guru-jobs
+
+queue_worker.py (always-on background process)
+  │
+  ├── receive_job()       ←  SQS long-poll (10s)
+  ├── set_job_status()    →  DynamoDB: status = PROCESSING
+  ├── download from S3
+  ├── process_invoice()   →  LangGraph pipeline
+  ├── update_queued_job() →  DynamoDB: status = DONE (full OCR/audit data)
+  └── delete_job()        →  SQS: message deleted
 ```
 
-#### Duplicate Detection
-Checks against all previously processed invoices in the session:
-- Exact `invoice_id` match → `DUPLICATE_INVOICE_ID:<id>`
-- Same vendor + amount + date with a different ID → `POSSIBLE_DUPLICATE:same_vendor_amount_date`
+**Job status lifecycle:** `QUEUED` → `PROCESSING` → `DONE` / `ERROR`
 
-#### Policy Violations
-
-| Check | Flag |
-|---|---|
-| Category not in approved list | `UNAPPROVED_CATEGORY:<category>` |
-| Amount exceeds category limit | `EXCEEDS_LIMIT:<category>:$<amount>_limit_$<limit>` |
-| Invoice older than 30 days | `LATE_SUBMISSION:<n>_days_since_invoice` |
-| Amount > $2 000 | `REQUIRES_FINANCE_VP_APPROVAL` |
-| Amount $500 – $2 000 | `REQUIRES_DEPT_HEAD_APPROVAL` |
-| Amount $100 – $500 | `REQUIRES_MANAGER_APPROVAL` |
-
-**Category spending limits:**
-
-| Category | Limit |
-|---|---|
-| Meals | $150 |
-| Accommodation | $300 |
-| Office Supplies | $500 |
-| Travel | $5 000 |
-| Software | $2 000 |
-| Professional Services | $10 000 |
-
-**Output:**
-
-| Field | Type | Description |
-|---|---|---|
-| `validation_status` | `str` | `PASSED` / `WARNING` / `FAILED` |
-| `flags` | `list[str]` | All raised flags |
-| `critical_flags` | `list[str]` | MISSING_FIELD, DUPLICATE, UNAPPROVED |
-| `warning_flags` | `list[str]` | Non-critical flags |
-| `flag_count` | `int` | Total flag count |
-
----
-
-### 3. Audit Agent
-
-**File:** `agents/audit_agent.py`
-
-Queries the RAG store for relevant policy sections, then sends invoice data + validation flags + policy context to the Groq LLM for a final audit decision.
-
-**Input:** `invoice: dict`, `validation_result: dict`
-
-**Output:**
-
-| Field | Type | Description |
-|---|---|---|
-| `audit_status` | `str` | `APPROVED` / `REJECTED` / `NEEDS_REVIEW` |
-| `reasoning` | `str` | 2–4 sentence explanation |
-| `recommendation` | `str` | One clear action for the employee or manager |
-| `confidence` | `float` | 0.0 – 1.0 audit confidence |
-| `policy_references` | `list[str]` | Policy sections referenced |
-| `risk_level` | `str` | `LOW` / `MEDIUM` / `HIGH` |
-
----
-
-### RAG Policy Store
-
-**File:** `rag/policy_rag.py`
-
-Loads `data/expense_policy.txt` and builds a FAISS vector index using `sentence-transformers` (`all-MiniLM-L6-v2`). The index is cached to `data/faiss_index/` on first run.
-
-`get_policy_context(query, k=4)` returns the top-4 most semantically similar policy chunks as a single string, which is injected into the Audit Agent's prompt.
-
-The vector store is a module-level singleton — it is built once per process.
+The Upload tab shows a live status panel for in-flight jobs with a **↻ Refresh** button.
 
 ---
 
 ## Data Storage
 
-**File:** `db.py`  
-**Database:** `audit.db` (SQLite, path configurable via `DB_PATH` in `.env`)
+### DynamoDB — `db.py`
 
-### Schema
+**Table: `audit-invoices`** (PK: `id` UUID)
 
-```sql
-CREATE TABLE invoices (
-    id               INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename         TEXT,
-    invoice_id       TEXT,
-    ocr_json         TEXT,       -- JSON blob: full OCR result
-    validation_json  TEXT,       -- JSON blob: validation result
-    audit_json       TEXT,       -- JSON blob: audit result
-    review_decision  TEXT,       -- NULL | 'APPROVED' | 'REJECTED'
-    review_notes     TEXT,       -- Free-text reviewer notes
-    created_at       TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-```
+| Attribute | Description |
+|---|---|
+| `id` | UUID (partition key) |
+| `version` | Optimistic lock counter (increments on every write) |
+| `filename` | Original PDF filename |
+| `invoice_id` | Extracted invoice number |
+| `ocr_json` | Full OCR result (JSON) |
+| `validation_json` | Validation result + flags (JSON) |
+| `audit_json` | Audit decision + reasoning (JSON) |
+| `corrections_json` | Manual field corrections by reviewer (JSON) |
+| `review_decision` | `APPROVED` / `REJECTED` / empty |
+| `review_notes` | Free-text reviewer notes |
+| `s3_key` | Object key inside S3 bucket |
+| `s3_url` | Canonical S3 URL |
+| `queue_status` | `QUEUED` / `PROCESSING` / `DONE` / `ERROR` |
+| `queue_error` | Error message if status = ERROR |
+| `created_at` | ISO 8601 UTC timestamp |
 
-### API
+**Table: `audit-trail`** (PK: `invoice_id`, SK: `timestamp`)
+
+Immutable log of every action: `QUEUED`, `UPLOADED`, `CORRECTED`, `APPROVED`, `REJECTED`.
+
+### Key functions
 
 | Function | Description |
 |---|---|
-| `init_db()` | Creates the table if it does not exist |
-| `save_result(result)` | Inserts a new invoice record |
-| `load_all_results()` | Returns all rows ordered by `created_at DESC` |
-| `save_review(db_id, decision, notes)` | Updates reviewer decision |
-| `delete_result(db_id)` | Deletes a record by primary key |
+| `init_db()` | Creates both tables if they don't exist |
+| `save_queued_job()` | Phase 1: creates placeholder record (status=QUEUED) |
+| `update_queued_job()` | Phase 2: fills in pipeline results (status=DONE) |
+| `set_job_status()` | Worker updates PROCESSING / ERROR |
+| `load_all_results()` | Full table scan with strong consistency |
+| `save_review()` | Optimistic-locked approval/rejection |
+| `save_corrections()` | Saves manual field edits, logs CORRECTED event |
+| `get_audit_trail()` | Queries trail by invoice_id |
+| `log_action()` | Appends to audit trail |
+
+---
+
+## File Storage
+
+**S3 bucket:** `audit-guru-invoices`
+
+```
+audit-guru-invoices/
+  config/
+    expense_policy.txt          ← expense policy (RAG source)
+  invoices/
+    YYYY-MM-DD/
+      <uuid>_filename.pdf       ← uploaded invoice PDFs
+```
+
+PDF previews in the Invoices tab use **presigned URLs** (30-minute expiry) so the bucket stays private.
 
 ---
 
 ## Frontend
 
-**File:** `app.py`  
-**Framework:** Streamlit 1.45  
-**URL:** `http://localhost:8501`
+**File:** `app.py` · **Framework:** Streamlit · **URL:** `http://localhost:8501`
+
+### Login
+
+Dark navy login page. Three built-in accounts (passwords configurable via env or SSM):
+
+| Username | Default password | Role |
+|---|---|---|
+| `admin` | `admin123` | Admin |
+| `reviewer` | `review123` | Reviewer |
+| `viewer` | `view123` | Viewer |
 
 ### Tab 1 — Dashboard
 
-- **Primary KPIs:** Total Invoices, Approved, Rejected, Pending Review
-- **Secondary KPIs:** Avg Invoice Amount, Approval Rate %, Total Flags, Avg AI Confidence
-- **Charts (Plotly):**
-  - Spend by Category (horizontal bar)
-  - Top Vendors by Spend (horizontal bar, gold)
-  - Status Distribution (donut)
-  - Risk Level Distribution (bar)
-  - Flag Type Breakdown (bar)
-  - Amount vs AI Confidence (scatter, colored by status)
-- **Invoice Table:** HTML table with all invoices, status pills, risk badges
-- **Detailed View:** Collapsible expanders with full per-invoice breakdown
-- **Export CSV:** Top-right button, downloads all invoice data
+Analytics only. KPI cards, 6 Plotly charts (spend by category, top vendors, status donut, risk bar, flag breakdown, amount vs confidence scatter).
 
-### Tab 2 — Upload Invoice
+### Tab 2 — Upload Invoice *(Admin only)*
 
-- Pipeline diagram (OCR → Validate → Audit → Decision)
-- PDF file uploader (multi-file)
-- "Run Audit Pipeline" button processes each file sequentially through LangGraph
+- PDF magic-byte validation (rejects renamed non-PDFs)
+- Multi-file uploader — queues all files instantly to S3 + SQS
+- Live queue status panel showing QUEUED / PROCESSING / ERROR per file
 
-### Tab 3 — Review Queue
+### Tab 3 — Invoices
 
-- Shows only invoices with `audit_status = NEEDS_REVIEW`
-- Each invoice renders as a case card with:
-  - Dark navy header: vendor, invoice ID, amount, risk badge
-  - Left column: invoice details, line items, validation flags
-  - Right column: AI reasoning, recommendation, policy references
-  - Footer: reviewer notes text input + Approve / Reject buttons
-- Decided cases shown in a compact list below
+- Filter bar: status, risk level, category, vendor search, amount range
+- Summary HTML table + CSV/XLSX export
+- Per-invoice expander with 3 inner tabs:
+  - **Details** — extracted data, validation flags, audit decision, PDF preview (iframe via presigned URL)
+  - **Correct Fields** — editable form (Admin/Reviewer only), saves corrections + logs to audit trail
+  - **Audit Trail** — timestamped event timeline
 
-### Tab 4 — Reports
+### Tab 4 — Review Queue
 
-- Total, Approved, Rejected, Pending metrics
-- Grouped lists: Approved / Rejected / Pending with amounts and recommendations
-- Export CSV button
+- Pending cases: case cards with AI reasoning, policy references, reviewer notes, Approve/Reject buttons
+- Bulk Approve All / Reject All with optimistic locking conflict detection
+- Decided cases shown in a compact list
+
+### Tab 5 — Reports
+
+- **KPI bar** + CSV/XLSX export
+- **AI Executive Summary** — Groq-generated narrative (on-demand button)
+- **Vendor Summary** — spend, invoice count, approved/rejected/flagged per vendor
+- **Category Summary** — spend, %, avg invoice per category
+- **Monthly Summary** — spend and flag count grouped by invoice month
+- **Exception Summary** — amount at risk, high-risk exposure, violation type breakdown table
+- **Invoice list** by status (Approved / Rejected / Pending)
+
+---
+
+## Roles & Access
+
+| Feature | Admin | Reviewer | Viewer |
+|---|---|---|---|
+| Dashboard | ✓ | ✓ | ✓ |
+| Upload Invoice | ✓ | — | — |
+| Invoices (view) | ✓ | ✓ | ✓ |
+| Correct Fields | ✓ | ✓ | — |
+| Review Queue (view) | ✓ | ✓ | ✓ |
+| Approve / Reject | ✓ | ✓ | — |
+| Reports | ✓ | ✓ | ✓ |
 
 ---
 
 ## Configuration
 
-All configuration lives in `.env`. Copy `.env.example` to `.env` and fill in values.
+Secrets load from **AWS SSM Parameter Store** when running on EC2 (no credentials needed — uses IAM role). Falls back to `.env` for local development. App validates all required vars at startup and fails fast with a clear error.
 
-| Variable | Default | Description |
+| Variable | Required | Description |
 |---|---|---|
-| `GROQ_API_KEY` | — | **Required.** Your Groq API key |
-| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model for OCR and Audit agents |
-| `GROQ_MAX_TOKENS` | `1024` | Max tokens per LLM response |
-| `DB_PATH` | `audit.db` | SQLite file path (relative to project root or absolute) |
-| `APP_NAME` | `Audit Guru` | Application display name |
-| `S3_ENDPOINT_URL` | `http://localhost:4566` | LocalStack S3 endpoint |
-| `S3_BUCKET_NAME` | `audit-guru-invoices` | S3 bucket where PDFs are stored |
-| `AWS_ACCESS_KEY_ID` | `test` | LocalStack access key (any string works) |
-| `AWS_SECRET_ACCESS_KEY` | `test` | LocalStack secret key (any string works) |
-| `AWS_REGION` | `us-east-1` | AWS region |
+| `GROQ_API_KEY` | Yes | Groq API key |
+| `GROQ_MODEL` | No | Default: `llama-3.3-70b-versatile` |
+| `GROQ_MAX_TOKENS` | No | Default: `1024` |
+| `AWS_ACCESS_KEY_ID` | Yes | IAM user access key |
+| `AWS_SECRET_ACCESS_KEY` | Yes | IAM user secret key |
+| `AWS_REGION` | Yes | Default: `us-east-1` |
+| `S3_BUCKET_NAME` | Yes | Default: `audit-guru-invoices` |
+| `DYNAMODB_TABLE_NAME` | No | Default: `audit-invoices` |
+| `SQS_QUEUE_NAME` | No | Default: `audit-guru-jobs` |
+| `ADMIN_PASSWORD` | No | Default: `admin123` |
+| `REVIEWER_PASSWORD` | No | Default: `review123` |
+| `VIEWER_PASSWORD` | No | Default: `view123` |
+| `APP_NAME` | No | Default: `Audit Guru` |
 
-To switch to a faster/cheaper model: `GROQ_MODEL=llama-3.1-8b-instant`
+**Push secrets to SSM (run once):**
+
+```bash
+python push_secrets.py
+```
 
 ---
 
@@ -306,16 +349,20 @@ To switch to a faster/cheaper model: `GROQ_MODEL=llama-3.1-8b-instant`
 ### Prerequisites
 
 - Python 3.11+
-- A free Groq API key from [console.groq.com](https://console.groq.com)
-- Docker (for LocalStack S3)
+- Groq API key — [console.groq.com](https://console.groq.com)
+- AWS account with:
+  - S3 bucket: `audit-guru-invoices`
+  - DynamoDB tables auto-created by `init_db()` on first run
+  - SQS queue auto-created by `sqs_queue.py` on first run
+  - IAM user with S3, DynamoDB, SQS full access
 
 ### Steps
 
 ```bash
-# 1. Clone / navigate to the project
+# 1. Clone and enter the project
 cd capstone
 
-# 2. Create and activate virtual environment
+# 2. Create virtual environment
 python -m venv venv
 venv\Scripts\activate          # Windows
 # source venv/bin/activate     # macOS / Linux
@@ -324,17 +371,13 @@ venv\Scripts\activate          # Windows
 pip install -r requirements.txt
 
 # 4. Configure environment
-copy .env.example .env         # Windows
-# cp .env.example .env         # macOS / Linux
-# Then open .env and add your GROQ_API_KEY
+copy .env.example .env
+# Fill in GROQ_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, S3_BUCKET_NAME
 
-# 5. Start LocalStack via Docker
-docker compose up -d      # starts LocalStack S3 on port 4566
-# Wait until healthy:
-docker compose ps         # STATUS should show "healthy"
+# 5. (Optional) Push secrets to SSM for EC2 use
+python push_secrets.py
 
-# 6. (Optional) Verify the FAISS index is built
-#    It auto-builds on first run, but you can pre-build:
+# 6. Pre-build FAISS index
 python -c "from rag.policy_rag import get_policy_context; print('RAG ready')"
 ```
 
@@ -342,57 +385,29 @@ python -c "from rag.policy_rag import get_policy_context; print('RAG ready')"
 
 ## Running the App
 
-```bash
-# 1. Start LocalStack (S3)
-docker compose up -d
+Two processes must run simultaneously — the Streamlit UI and the queue worker.
 
-# 2. Start the app (activate venv first)
+**Terminal 1 — UI:**
+```bash
 streamlit run app.py
 ```
 
-Open `http://localhost:8501` in your browser.
-
-To run headless (background):
-
-```powershell
-Start-Process -NoNewWindow -FilePath "venv\Scripts\streamlit.exe" -ArgumentList "run","app.py"
+**Terminal 2 — Queue worker:**
+```bash
+python queue_worker.py
 ```
 
----
+Open `http://localhost:8501` and log in as `admin` / `admin123`.
 
-## API Reference
+### On EC2 (production)
 
-### `pipeline.process_invoice(pdf_path, processed_invoices=[])`
+Run both as systemd services so they restart automatically on crash. A service template is included as a comment at the top of `queue_worker.py`.
 
-Main entry point. Runs the full LangGraph pipeline on a single PDF.
+```bash
+# Copy and enable the worker service
+sudo cp queue_worker.service /etc/systemd/system/
+sudo systemctl enable --now queue_worker
 
-```python
-from pipeline import process_invoice
-
-state = process_invoice("invoice.pdf", previously_processed_list)
-# state keys: pdf_path, ocr_result, validation_result, audit_result, error
-```
-
-### `db.save_result(result)` / `db.load_all_results()`
-
-```python
-from db import save_result, load_all_results
-
-save_result({
-    "filename": "invoice.pdf",
-    "ocr": {...},
-    "validation": {...},
-    "audit": {...},
-})
-
-results = load_all_results()  # list of dicts with db_id, ocr, validation, audit, review_decision
-```
-
-### `rag.policy_rag.get_policy_context(query, k=4)`
-
-```python
-from rag.policy_rag import get_policy_context
-
-context = get_policy_context("travel expenses hotel accommodation", k=4)
-# returns top-4 policy chunks as a newline-separated string
+# Run Streamlit
+streamlit run app.py --server.port 8501 --server.headless true
 ```
