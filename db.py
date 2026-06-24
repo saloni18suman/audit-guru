@@ -133,6 +133,74 @@ def get_audit_trail(invoice_id: str) -> list[dict]:
 
 # ── Invoice CRUD ──────────────────────────────────────────────────────────────
 
+def save_queued_job(db_id: str, filename: str, s3_key: str, s3_url: str) -> None:
+    """
+    Phase 1 of the two-phase queue write.
+    Creates a placeholder record immediately so the UI can show queue status.
+    """
+    _resource().Table(_TABLE_NAME).put_item(
+        Item={
+            "id":               db_id,
+            "version":          1,
+            "filename":         filename,
+            "invoice_id":       "QUEUED",
+            "ocr_json":         "{}",
+            "validation_json":  "{}",
+            "audit_json":       "{}",
+            "corrections_json": "{}",
+            "review_decision":  "",
+            "review_notes":     "",
+            "s3_key":           s3_key,
+            "s3_url":           s3_url,
+            "queue_status":     "QUEUED",
+            "queue_error":      "",
+            "created_at":       _now_iso(),
+        },
+        ConditionExpression=Attr("id").not_exists(),
+    )
+    log_action(db_id, "QUEUED", {"filename": filename, "s3_key": s3_key})
+
+
+def update_queued_job(db_id: str, result: dict) -> None:
+    """
+    Phase 2: worker calls this after pipeline completes.
+    Fills in OCR/validation/audit data and sets queue_status=DONE.
+    """
+    ocr = result.get("ocr", {})
+    _resource().Table(_TABLE_NAME).update_item(
+        Key={"id": db_id},
+        UpdateExpression=(
+            "SET invoice_id = :iid, ocr_json = :o, validation_json = :v, "
+            "audit_json = :a, queue_status = :qs, queue_error = :qe, #ver = #ver + :one"
+        ),
+        ExpressionAttributeNames={"#ver": "version"},
+        ExpressionAttributeValues={
+            ":iid": ocr.get("invoice_id", "UNKNOWN"),
+            ":o":   json.dumps(result.get("ocr", {})),
+            ":v":   json.dumps(result.get("validation", {})),
+            ":a":   json.dumps(result.get("audit", {})),
+            ":qs":  "DONE",
+            ":qe":  "",
+            ":one": 1,
+        },
+    )
+    log_action(db_id, "UPLOADED", {
+        "filename":   result.get("filename", ""),
+        "invoice_id": ocr.get("invoice_id", "UNKNOWN"),
+        "amount":     ocr.get("amount", 0),
+        "vendor":     ocr.get("vendor", ""),
+    })
+
+
+def set_job_status(db_id: str, status: str, error: str = "") -> None:
+    """Update only the queue_status field (used by worker to mark PROCESSING/ERROR)."""
+    _resource().Table(_TABLE_NAME).update_item(
+        Key={"id": db_id},
+        UpdateExpression="SET queue_status = :s, queue_error = :e",
+        ExpressionAttributeValues={":s": status, ":e": error},
+    )
+
+
 def save_result(result: dict) -> str:
     ocr = result.get("ocr", {})
     record_id = str(uuid.uuid4())
@@ -199,6 +267,8 @@ def load_all_results() -> list[dict]:
             "s3_key":          item.get("s3_key") or None,
             "s3_url":          item.get("s3_url") or None,
             "version":         int(item.get("version", 1)),
+            "queue_status":    item.get("queue_status") or "DONE",
+            "queue_error":     item.get("queue_error") or "",
         }
         for item in items
     ]

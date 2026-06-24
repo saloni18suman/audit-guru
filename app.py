@@ -1,4 +1,4 @@
-import io, os, sys, tempfile
+import io, os, sys, tempfile, uuid
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -7,8 +7,9 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import load_config
 load_config()
 from pipeline import process_invoice
-from db import init_db, save_result, load_all_results, save_review, save_corrections, get_audit_trail, delete_result
+from db import init_db, save_result, load_all_results, save_review, save_corrections, get_audit_trail, delete_result, save_queued_job
 from s3_store import upload_invoice, get_presigned_url, is_available as s3_available
+from sqs_queue import send_job, queue_depth
 
 init_db()
 APP_NAME = os.environ.get("APP_NAME", "Audit Guru")
@@ -375,10 +376,11 @@ if "db_loaded" not in st.session_state:
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
-rs = st.session_state.results
-approved_n = sum(1 for r in rs if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED")
-rejected_n = sum(1 for r in rs if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED")
-pending_n  = sum(1 for r in rs if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision"))
+rs     = st.session_state.results
+rs_done = [r for r in rs if r.get("queue_status","DONE") == "DONE"]   # exclude QUEUED/PROCESSING
+approved_n = sum(1 for r in rs_done if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED")
+rejected_n = sum(1 for r in rs_done if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED")
+pending_n  = sum(1 for r in rs_done if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision"))
 
 # ── Top bar ───────────────────────────────────────────────────────────────────
 st.markdown(
@@ -424,9 +426,10 @@ with t1:
         margin=dict(l=0, r=0, t=28, b=0),
     )
 
-    if not rs:
+    if not rs_done:
         st.markdown('<div class="empty-state"><div class="empty-icon">'+svg("bar",44,"#7eb8e8")+'</div><div style="font-size:1rem;font-weight:600;color:#4a90d9;">No data yet</div><div class="empty-txt">Upload invoices in the Upload tab to populate the dashboard.</div></div>', unsafe_allow_html=True)
     else:
+        rs = rs_done
         # ── Pre-compute ──────────────────────────────────────────────────────
         total_amt  = sum(r["ocr"].get("amount",0) for r in rs)
         a_amt      = sum(r["ocr"].get("amount",0) for r in rs if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED")
@@ -673,48 +676,63 @@ with t2:
                 st.error(f"Not a valid PDF: {', '.join(invalid)}. Only real PDF files are accepted.")
 
         if valid:
-            if st.button("Run Audit Pipeline", type="primary"):
-                prog = st.progress(0, text="Initialising…")
-                status_out = st.empty()
+            if st.button(f"Queue {len(valid)} Invoice{'s' if len(valid)!=1 else ''} for Processing", type="primary"):
+                prog = st.progress(0, text="Uploading to S3…")
+                queued, failed = [], []
                 for i, f in enumerate(valid):
-                    prog.progress(i/len(valid), text=f"Processing {f.name}…")
-                    file_bytes = f.read()
-                    s3_key, s3_url = None, None
-                    if s3_ok:
-                        try:
-                            s3_key, s3_url = upload_invoice(file_bytes, f.name)
-                        except Exception as e:
-                            st.warning(f"S3 upload failed for {f.name}: {e}")
-                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                        tmp.write(file_bytes); path = tmp.name
+                    prog.progress(i / len(valid), text=f"Uploading {f.name}…")
                     try:
-                        with st.spinner(f"Agents running on {f.name}…"):
-                            state = process_invoice(path, st.session_state.processed_invoices)
-                        result = {
-                            "filename": f.name,
-                            "ocr": state.get("ocr_result", {}),
-                            "validation": state.get("validation_result", {}),
-                            "audit": state.get("audit_result", {}),
-                            "error": state.get("error", ""),
-                            "review_decision": None, "review_notes": None,
-                            "s3_key": s3_key, "s3_url": s3_url,
-                        }
-                        save_result(result)
-                        st.session_state.results = load_all_results()
-                        ocr = result["ocr"]
-                        if ocr.get("invoice_id","UNKNOWN") != "UNKNOWN":
-                            st.session_state.processed_invoices.append(ocr)
-                        a_st = result["audit"].get("audit_status","UNKNOWN")
-                        s3_note = f" · S3: `{s3_key}`" if s3_key else ""
-                        status_out.success(f"{'✅' if a_st=='APPROVED' else '❌' if a_st=='REJECTED' else '⚠️'} {f.name} → {a_st}{s3_note}")
+                        file_bytes = f.read()
+                        s3_key, s3_url = upload_invoice(file_bytes, f.name)
+                        job_id = str(uuid.uuid4())
+                        save_queued_job(job_id, f.name, s3_key, s3_url)
+                        send_job(job_id, f.name, s3_key, s3_url)
+                        queued.append(f.name)
                     except Exception as e:
-                        st.error(f"{f.name}: {e}")
-                    finally:
-                        os.unlink(path)
-                prog.progress(1.0, text="Complete!")
-                st.success("All invoices processed. View results in the Invoices tab.")
+                        failed.append(f"{f.name}: {e}")
+                prog.progress(1.0, text="Done!")
+                if queued:
+                    st.success(f"{len(queued)} invoice{'s' if len(queued)!=1 else ''} queued for processing: {', '.join(queued)}")
+                if failed:
+                    st.error("Failed to queue: " + "; ".join(failed))
+                st.session_state.results = load_all_results()
                 st.session_state.uploader_key += 1
                 st.rerun()
+        # ── Queue status panel ────────────────────────────────────────────────
+        queue_jobs = [r for r in st.session_state.results if r.get("queue_status") in ("QUEUED","PROCESSING","ERROR")]
+        if queue_jobs:
+            st.markdown("<div style='height:18px'></div>", unsafe_allow_html=True)
+            _qdepth = queue_depth()
+            st.markdown(
+                f'<div style="background:white;border:1px solid #b8d4f0;border-radius:12px;'
+                f'padding:18px 22px;box-shadow:0 2px 8px rgba(26,54,93,.06);">'
+                f'<div style="font-size:.7rem;font-weight:700;color:#4a90d9;text-transform:uppercase;'
+                f'letter-spacing:.09em;margin-bottom:14px;">Queue Status'
+                f'<span style="font-weight:400;color:#718096;margin-left:10px;text-transform:none;">'
+                f'{_qdepth} message{"s" if _qdepth!=1 else ""} in SQS</span></div>',
+                unsafe_allow_html=True)
+            _status_colors = {
+                "QUEUED":     ("#fffbeb","#d69e2e","⏳"),
+                "PROCESSING": ("#eff6ff","#3182ce","⚙️"),
+                "ERROR":      ("#fff5f5","#e53e3e","❌"),
+            }
+            for job in queue_jobs:
+                bg, cl, ico = _status_colors.get(job["queue_status"], ("#f7fafc","#4a5568","·"))
+                err_txt = f'<div style="font-size:.74rem;color:#e53e3e;margin-top:2px;">{job["queue_error"]}</div>' if job.get("queue_error") else ""
+                st.markdown(
+                    f'<div style="display:flex;align-items:flex-start;justify-content:space-between;'
+                    f'padding:8px 12px;background:{bg};border-radius:8px;margin-bottom:6px;">'
+                    f'<div><div style="font-size:.85rem;font-weight:600;color:#1a365d;">{ico} {job["filename"]}</div>'
+                    f'{err_txt}</div>'
+                    f'<span style="font-size:.7rem;font-weight:700;color:{cl};'
+                    f'background:white;border:1px solid {cl};padding:2px 8px;border-radius:4px;">'
+                    f'{job["queue_status"]}</span></div>',
+                    unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+            if st.button("↻ Refresh status", key="refresh_queue"):
+                st.session_state.results = load_all_results()
+                st.rerun()
+
         if not uploaded:
             if not st.session_state.results:
                 st.markdown('<div class="empty-state"><div class="empty-icon">'+svg("upload",40,"#7eb8e8")+'</div><div style="font-size:.92rem;color:#718096;">Upload one or more PDF invoices above to begin.</div></div>', unsafe_allow_html=True)
@@ -744,9 +762,10 @@ with t2:
 # TAB 3 — Invoices (filtered view)
 # ══════════════════════════════════════════════════════════════════════════════
 with t3:
-    if not rs:
+    if not rs_done:
         st.markdown('<div class="empty-state"><div class="empty-icon">'+svg("file",44,"#7eb8e8")+'</div><div style="font-size:1rem;font-weight:600;color:#4a90d9;">No invoices yet</div><div class="empty-txt">Upload invoices to see them here.</div></div>', unsafe_allow_html=True)
     else:
+        rs = rs_done
         all_categories = sorted(set(r["ocr"].get("category","Other") or "Other" for r in rs))
         all_vendors    = sorted(set(r["ocr"].get("vendor","Unknown") or "Unknown" for r in rs))
         all_amounts    = [r["ocr"].get("amount", 0) for r in rs]
@@ -894,7 +913,7 @@ with t3:
 # TAB 4 — Review Queue
 # ══════════════════════════════════════════════════════════════════════════════
 with t4:
-    needs = [r for r in st.session_state.results if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW"]
+    needs = [r for r in rs_done if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW"]
     pending = [r for r in needs if not r.get("review_decision")]
     decided = [r for r in needs if r.get("review_decision")]
 
@@ -1003,15 +1022,15 @@ with t4:
 # TAB 5 — Reports
 # ══════════════════════════════════════════════════════════════════════════════
 with t5:
-    if not rs:
+    if not rs_done:
         st.markdown('<div class="empty-state">'+svg("bar",44,"#7eb8e8")+'<div class="empty-txt">No data to report yet.</div></div>', unsafe_allow_html=True)
     else:
-        approved_l=[r for r in rs if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED"]
-        rejected_l=[r for r in rs if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED"]
-        pending_l =[r for r in rs if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision")]
+        approved_l=[r for r in rs_done if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED"]
+        rejected_l=[r for r in rs_done if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED"]
+        pending_l =[r for r in rs_done if r.get("audit",{}).get("audit_status")=="NEEDS_REVIEW" and not r.get("review_decision")]
         ta=sum(r["ocr"].get("amount",0) for r in approved_l)
         tr=sum(r["ocr"].get("amount",0) for r in rejected_l)
-        tv=sum(r["ocr"].get("amount",0) for r in rs)
+        tv=sum(r["ocr"].get("amount",0) for r in rs_done)
 
         c1,c2,c3,c4=st.columns(4)
         c1.metric("Total Value", f"${tv:,.2f}"); c2.metric("Approved", f"${ta:,.2f}", f"{len(approved_l)} invoices")
@@ -1019,7 +1038,7 @@ with t5:
 
         hc,dc=st.columns([5,1])
         with dc:
-            rows_data=[{"File":r["filename"],"Invoice ID":r["ocr"].get("invoice_id","-"),"Vendor":r["ocr"].get("vendor","-"),"Amount":r["ocr"].get("amount",0),"Category":r["ocr"].get("category","-"),"Validation":r["validation"].get("validation_status","-"),"Audit":r["audit"].get("audit_status","-"),"Risk":r["audit"].get("risk_level","-"),"Flags":len(r["validation"].get("flags",[])),"Reviewer":r.get("review_decision") or ""} for r in rs]
+            rows_data=[{"File":r["filename"],"Invoice ID":r["ocr"].get("invoice_id","-"),"Vendor":r["ocr"].get("vendor","-"),"Amount":r["ocr"].get("amount",0),"Category":r["ocr"].get("category","-"),"Validation":r["validation"].get("validation_status","-"),"Audit":r["audit"].get("audit_status","-"),"Risk":r["audit"].get("risk_level","-"),"Flags":len(r["validation"].get("flags",[])),"Reviewer":r.get("review_decision") or ""} for r in rs_done]
             st.download_button("↓ Export CSV", pd.DataFrame(rows_data).to_csv(index=False).encode(),"audit_results.csv","text/csv",use_container_width=True, key="dl_reports")
 
         st.divider()
