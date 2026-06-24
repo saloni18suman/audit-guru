@@ -257,13 +257,7 @@ PDF previews in the Invoices tab use **presigned URLs** (30-minute expiry) so th
 
 ### Login
 
-Dark navy login page. Three built-in accounts (passwords configurable via env or SSM):
-
-| Username | Default password | Role |
-|---|---|---|
-| `admin` | `admin123` | Admin |
-| `reviewer` | `review123` | Reviewer |
-| `viewer` | `view123` | Viewer |
+Dark navy login page. Three roles — Admin, Reviewer, Viewer. Credentials are configured via environment variables or AWS SSM Parameter Store. Contact your administrator for access.
 
 ### Tab 1 — Dashboard
 
@@ -331,9 +325,9 @@ Secrets load from **AWS SSM Parameter Store** when running on EC2 (no credential
 | `S3_BUCKET_NAME` | Yes | Default: `audit-guru-invoices` |
 | `DYNAMODB_TABLE_NAME` | No | Default: `audit-invoices` |
 | `SQS_QUEUE_NAME` | No | Default: `audit-guru-jobs` |
-| `ADMIN_PASSWORD` | No | Default: `admin123` |
-| `REVIEWER_PASSWORD` | No | Default: `review123` |
-| `VIEWER_PASSWORD` | No | Default: `view123` |
+| `ADMIN_PASSWORD` | Yes | Admin account password |
+| `REVIEWER_PASSWORD` | Yes | Reviewer account password |
+| `VIEWER_PASSWORD` | Yes | Viewer account password |
 | `APP_NAME` | No | Default: `Audit Guru` |
 
 **Push secrets to SSM (run once):**
