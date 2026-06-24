@@ -14,16 +14,12 @@ Tables:
 import json
 import logging
 import os
-import uuid
 from datetime import datetime, timezone
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.config import Config
 from botocore.exceptions import ClientError
-from dotenv import load_dotenv
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -201,43 +197,6 @@ def set_job_status(db_id: str, status: str, error: str = "") -> None:
     )
 
 
-def save_result(result: dict) -> str:
-    ocr = result.get("ocr", {})
-    record_id = str(uuid.uuid4())
-    try:
-        _resource().Table(_TABLE_NAME).put_item(
-            Item={
-                "id":               record_id,
-                "version":          1,                     # optimistic locking seed
-                "filename":         result.get("filename", ""),
-                "invoice_id":       ocr.get("invoice_id", "UNKNOWN"),
-                "ocr_json":         json.dumps(result.get("ocr", {})),
-                "validation_json":  json.dumps(result.get("validation", {})),
-                "audit_json":       json.dumps(result.get("audit", {})),
-                "corrections_json": "{}",
-                "review_decision":  result.get("review_decision") or "",
-                "review_notes":     result.get("review_notes") or "",
-                "s3_key":           result.get("s3_key") or "",
-                "s3_url":           result.get("s3_url") or "",
-                "created_at":       _now_iso(),
-            },
-            ConditionExpression=Attr("id").not_exists(),   # idempotency guard
-        )
-    except ClientError as e:
-        if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
-            logger.warning("Duplicate write ignored for record %s", record_id)
-            return record_id
-        raise
-
-    log_action(record_id, "UPLOADED", {
-        "filename":   result.get("filename", ""),
-        "invoice_id": ocr.get("invoice_id", "UNKNOWN"),
-        "amount":     ocr.get("amount", 0),
-        "vendor":     ocr.get("vendor", ""),
-    })
-    return record_id
-
-
 def load_all_results() -> list[dict]:
     table = _resource().Table(_TABLE_NAME)
     try:
@@ -317,9 +276,3 @@ def save_corrections(db_id: str, corrections: dict, original_ocr: dict) -> None:
         raise
 
 
-def delete_result(db_id: str) -> None:
-    try:
-        _resource().Table(_TABLE_NAME).delete_item(Key={"id": db_id})
-    except ClientError:
-        logger.exception("Failed to delete record %s", db_id)
-        raise
