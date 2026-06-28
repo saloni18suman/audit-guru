@@ -36,7 +36,7 @@ from config import load_config
 
 load_config()
 
-from db import set_job_status, update_queued_job
+from db import set_job_status, update_queued_job, load_all_results
 from pipeline import process_invoice
 from sqs_queue import delete_job, receive_job
 
@@ -81,8 +81,18 @@ def _handle_job(message: dict) -> None:
         tmp.close()
         tmp_path = tmp.name
 
+        # Build the list of already-processed invoices so the Validation Agent can
+        # detect duplicates. The worker handles each SQS job independently, so this
+        # context must come from DynamoDB (not in-memory). Exclude this job's own
+        # placeholder record and any without a real extracted invoice_id.
+        prior_invoices = [
+            r["ocr"] for r in load_all_results()
+            if r["db_id"] != db_id
+            and r.get("ocr", {}).get("invoice_id", "UNKNOWN") not in ("UNKNOWN", "QUEUED", None, "")
+        ]
+
         # Run the full audit pipeline
-        state = process_invoice(tmp_path, [])
+        state = process_invoice(tmp_path, prior_invoices)
 
         result = {
             "filename":   filename,
