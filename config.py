@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
-SSM_PREFIX = "/audit-guru"
+SSM_PREFIX = "/anomaguard"
 
 _REQUIRED = [
     "GROQ_API_KEY",

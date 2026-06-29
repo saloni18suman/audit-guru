@@ -60,11 +60,11 @@ def build_report_pdf(results: list[dict], summary: dict | None = None) -> bytes:
         buf, pagesize=letter,
         leftMargin=0.7 * inch, rightMargin=0.7 * inch,
         topMargin=0.7 * inch, bottomMargin=0.7 * inch,
-        title="Audit Guru — Expense Audit Report",
+        title="AnomaGuard — Expense Audit Report",
     )
     story = []
 
-    story.append(Paragraph("Audit Guru — Expense Audit Report", ss["FGTitle"]))
+    story.append(Paragraph("AnomaGuard — Expense Audit Report", ss["FGTitle"]))
     story.append(Paragraph(
         "Generated " + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"), ss["FGSub"]))
 

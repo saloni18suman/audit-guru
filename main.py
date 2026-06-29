@@ -23,7 +23,7 @@ def main() -> int:
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
     resp = client.chat.completions.create(
         model=_MODEL,
-        messages=[{"role": "user", "content": "Reply with exactly: Audit Guru LLM OK"}],
+        messages=[{"role": "user", "content": "Reply with exactly: AnomaGuard LLM OK"}],
         max_tokens=16,
     )
     print(f"Model: {_MODEL}")

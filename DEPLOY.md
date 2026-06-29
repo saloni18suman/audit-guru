@@ -1,4 +1,4 @@
-# Deploying Audit Guru on AWS EC2
+# Deploying AnomaGuard on AWS EC2
 
 This guide deploys the full system on a single EC2 instance. The app is AWS-native:
 PDFs live in **S3**, jobs flow through **SQS**, results and the audit trail live in
@@ -14,7 +14,7 @@ PDFs live in **S3**, jobs flow through **SQS**, results and the audit trail live
                 └─────┼──────────────────────────┼──────────────────┘
                       ▼                           ▼
                   S3 bucket                   DynamoDB
-              audit-guru-invoices      audit-invoices / audit-trail
+              anomaguard-invoices      audit-invoices / audit-trail
 ```
 
 The two processes run as **systemd** services so they restart on crash and on reboot.
@@ -29,8 +29,8 @@ Names must match the defaults in the code (override via SSM if you change them):
 
 | Resource | Name | Created by |
 |---|---|---|
-| S3 bucket | `audit-guru-invoices` | `s3_store.ensure_bucket()` |
-| SQS queue | `audit-guru-jobs` (visibility timeout 300s) | `sqs_queue.get_queue_url()` |
+| S3 bucket | `anomaguard-invoices` | `s3_store.ensure_bucket()` |
+| SQS queue | `anomaguard-jobs` (visibility timeout 300s) | `sqs_queue.get_queue_url()` |
 | DynamoDB table | `audit-invoices` (PK `id`, on-demand) | `db.init_db()` |
 | DynamoDB table | `audit-trail` (PK `invoice_id`, SK `timestamp`) | `db.init_db()` |
 
@@ -42,16 +42,16 @@ SQS on the job queue, DynamoDB on the two tables). Attach it to the instance in 
 
 ## 3. Store configuration in SSM Parameter Store
 
-`config.py` loads every `/audit-guru/*` parameter into the environment at startup
+`config.py` loads every `/anomaguard/*` parameter into the environment at startup
 (decrypting SecureStrings) and falls back to `.env` only for local dev. Create:
 
 ```bash
-aws ssm put-parameter --name /audit-guru/GROQ_API_KEY   --type SecureString --value "gsk_your_real_key"
-aws ssm put-parameter --name /audit-guru/GROQ_MODEL      --type String --value "llama-3.3-70b-versatile"
-aws ssm put-parameter --name /audit-guru/S3_BUCKET_NAME  --type String --value "audit-guru-invoices"
-aws ssm put-parameter --name /audit-guru/APP_NAME        --type String --value "Audit Guru"
+aws ssm put-parameter --name /anomaguard/GROQ_API_KEY   --type SecureString --value "gsk_your_real_key"
+aws ssm put-parameter --name /anomaguard/GROQ_MODEL      --type String --value "llama-3.3-70b-versatile"
+aws ssm put-parameter --name /anomaguard/S3_BUCKET_NAME  --type String --value "anomaguard-invoices"
+aws ssm put-parameter --name /anomaguard/APP_NAME        --type String --value "AnomaGuard"
 # App login passwords (optional — defaults exist in app.py):
-aws ssm put-parameter --name /audit-guru/ADMIN_PASSWORD  --type SecureString --value "<set-a-strong-one>"
+aws ssm put-parameter --name /anomaguard/ADMIN_PASSWORD  --type SecureString --value "<set-a-strong-one>"
 ```
 
 `AWS_REGION` is provided by the systemd unit files; on EC2 the IAM role supplies
@@ -71,22 +71,22 @@ credentials, so `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are **not** needed
 
 ```bash
 ssh ec2-user@<public-ip>
-git clone <your-repo-url> audit-guru
-cd audit-guru
+git clone <your-repo-url> anomaguard
+cd anomaguard
 bash deploy/setup-ec2.sh
 ```
 
 [`deploy/setup-ec2.sh`](deploy/setup-ec2.sh) installs Python 3.11, builds the venv,
 pre-builds the FAISS policy index, installs the two systemd units, and starts them:
 
-- [`deploy/audit-guru-web.service`](deploy/audit-guru-web.service) — Streamlit on `0.0.0.0:8501`
-- [`deploy/audit-guru-worker.service`](deploy/audit-guru-worker.service) — `queue_worker.py`
+- [`deploy/anomaguard-web.service`](deploy/anomaguard-web.service) — Streamlit on `0.0.0.0:8501`
+- [`deploy/anomaguard-worker.service`](deploy/anomaguard-worker.service) — `queue_worker.py`
 
 ## 6. Verify
 
 ```bash
-sudo systemctl status audit-guru-web audit-guru-worker
-journalctl -u audit-guru-worker -f          # watch jobs being processed
+sudo systemctl status anomaguard-web anomaguard-worker
+journalctl -u anomaguard-worker -f          # watch jobs being processed
 ```
 
 Open `http://<public-ip>:8501`, sign in as `admin` / `admin123` (change this in SSM),
@@ -96,8 +96,8 @@ QUEUED → PROCESSING → DONE and appears on the Dashboard.
 ## Operations
 
 ```bash
-sudo systemctl restart audit-guru-web      # after a code change + git pull
-git pull && sudo systemctl restart audit-guru-web audit-guru-worker
+sudo systemctl restart anomaguard-web      # after a code change + git pull
+git pull && sudo systemctl restart anomaguard-web anomaguard-worker
 ```
 
 To scale throughput, run the worker on additional instances pointed at the same SQS

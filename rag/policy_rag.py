@@ -12,7 +12,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import SentenceTransformerEmbeddings
 
-_S3_BUCKET     = os.environ.get("S3_BUCKET_NAME",      "audit-guru-invoices")
+_S3_BUCKET     = os.environ.get("S3_BUCKET_NAME",      "anomaguard-invoices")
 _S3_POLICY_KEY = "config/expense_policy.txt"
 _LOCAL_POLICY  = os.path.join(os.path.dirname(__file__), "..", "data", "expense_policy.txt")
 _FAISS_PATH    = os.path.join(os.path.dirname(__file__), "..", "data", "faiss_index")

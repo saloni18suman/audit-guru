@@ -13,7 +13,7 @@ ssm = boto3.client("ssm",
     aws_access_key_id=secrets.get("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=secrets.get("AWS_SECRET_ACCESS_KEY"),
 )
-PREFIX = "/audit-guru"
+PREFIX = "/anomaguard"
 
 for key, value in secrets.items():
     if not value:

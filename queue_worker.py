@@ -9,12 +9,12 @@ and writes results back to DynamoDB.
 On EC2: run as a systemd service (see below) so it restarts on crash.
 
     [Unit]
-    Description=Audit Guru Queue Worker
+    Description=AnomaGuard Queue Worker
     After=network.target
 
     [Service]
-    WorkingDirectory=/home/ec2-user/audit-guru
-    ExecStart=/home/ec2-user/audit-guru/venv/bin/python queue_worker.py
+    WorkingDirectory=/home/ec2-user/anomaguard
+    ExecStart=/home/ec2-user/anomaguard/venv/bin/python queue_worker.py
     Restart=always
     RestartSec=5
 
@@ -47,7 +47,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("queue_worker")
 
-_BUCKET     = os.environ.get("S3_BUCKET_NAME",  "audit-guru-invoices")
+_BUCKET     = os.environ.get("S3_BUCKET_NAME",  "anomaguard-invoices")
 _REGION     = os.environ.get("AWS_REGION",       "us-east-1")
 _ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY_ID")     or None
 _SECRET_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY") or None

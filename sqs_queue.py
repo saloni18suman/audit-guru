@@ -1,6 +1,6 @@
 """
 SQS queue operations for the invoice processing pipeline.
-Queue name: audit-guru-jobs (standard queue, not FIFO)
+Queue name: anomaguard-jobs (standard queue, not FIFO)
 """
 
 import json
@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
 
-_QUEUE_NAME = os.environ.get("SQS_QUEUE_NAME", "audit-guru-jobs")
+_QUEUE_NAME = os.environ.get("SQS_QUEUE_NAME", "anomaguard-jobs")
 _REGION     = os.environ.get("AWS_REGION",      "us-east-1")
 _ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY_ID")     or None
 _SECRET_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY") or None

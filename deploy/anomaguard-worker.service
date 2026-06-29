@@ -1,0 +1,15 @@
+[Unit]
+Description=AnomaGuard - SQS queue worker (runs the OCR -> Validation -> Audit pipeline)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/anomaguard
+Environment=AWS_REGION=us-east-1
+ExecStart=/home/ec2-user/anomaguard/venv/bin/python queue_worker.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
