@@ -256,19 +256,24 @@ def save_review(db_id: str, decision: str, notes: str, version: int = 1) -> bool
 
 
 def save_corrections(db_id: str, corrections: dict, original_ocr: dict) -> None:
-    changes = {
-        k: {"from": str(original_ocr.get(k, "")), "to": str(v)}
-        for k, v in corrections.items()
+    # Keep only the fields that differ from the original OCR. Storing the diff (not the
+    # whole form) means reverting a field back to its original value REMOVES that override
+    # — so the effective record returns to the original. We always persist the recomputed
+    # diff (even when empty) so a revert actually takes effect.
+    new_corrections = {
+        k: v for k, v in corrections.items()
         if str(original_ocr.get(k, "")) != str(v)
     }
-    if not changes:
-        return
+    changes = {
+        k: {"from": str(original_ocr.get(k, "")), "to": str(v)}
+        for k, v in new_corrections.items()
+    }
     try:
         _resource().Table(_TABLE_NAME).update_item(
             Key={"id": db_id},
             UpdateExpression="SET corrections_json = :c, #v = #v + :one",
             ExpressionAttributeNames={"#v": "version"},
-            ExpressionAttributeValues={":c": json.dumps(corrections), ":one": 1},
+            ExpressionAttributeValues={":c": json.dumps(new_corrections), ":one": 1},
         )
         log_action(db_id, "CORRECTED", {"changes": changes})
     except ClientError:

@@ -443,7 +443,7 @@ st.markdown(
     f'{svg("shield",26,"#16B364")}'
     f'<div><div class="tb-title">{APP_NAME}</div>'
     f'<div class="tb-sub">AI-POWERED INVOICE AUDIT PLATFORM</div></div>'
-    f'</div><div class="tb-badge">Groq · LangGraph · RAG</div></div>',
+    f'</div><div class="tb-badge">Finance Edition</div></div>',
     unsafe_allow_html=True)
 
 # ── User bar (right-aligned light utility strip) ──────────────────────────────
@@ -735,7 +735,7 @@ with t2:
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D0D5DD" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           <div class="pipe-step">
             <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#0E9F6E" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-            <div class="pipe-lbl">Audit</div><div class="pipe-sub">AI decision + RAG</div>
+            <div class="pipe-lbl">Audit</div><div class="pipe-sub">AI-assisted decision</div>
           </div>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#D0D5DD" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           <div class="pipe-step">
@@ -746,20 +746,19 @@ with t2:
         """, unsafe_allow_html=True)
 
         s3_ok = s3_available()
-        s3_bucket = os.environ.get("S3_BUCKET_NAME", "audit-guru-invoices")
         if s3_ok:
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'
-                f'background:#ECFDF3;border:1px solid #A6F4C5;border-radius:8px;margin-bottom:16px;font-size:.83rem;color:#027A48;">'
-                f'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
-                f'<span><strong>S3 connected</strong> — uploads stored in <code>{s3_bucket}</code></span></div>',
+                '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'
+                'background:#ECFDF3;border:1px solid #A6F4C5;border-radius:8px;margin-bottom:16px;font-size:.83rem;color:#027A48;">'
+                '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+                '<span><strong>Secure storage connected</strong> — your uploads are saved automatically.</span></div>',
                 unsafe_allow_html=True)
         else:
             st.markdown(
                 '<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'
                 'background:#FFFAEB;border:1px solid #FDB022;border-radius:8px;margin-bottom:16px;font-size:.83rem;color:#B54708;">'
                 '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
-                '<span><strong>S3 unavailable</strong> — run <code>docker compose up -d</code> to enable storage.</span></div>',
+                '<span><strong>Storage is temporarily unavailable.</strong> Please try again shortly or contact your administrator.</span></div>',
                 unsafe_allow_html=True)
 
         uploaded = st.file_uploader("Upload PDF invoices only", type=["pdf"], accept_multiple_files=True, key=f"pdf_up_{st.session_state.uploader_key}")
@@ -822,7 +821,7 @@ with t2:
                 f'<div style="font-size:.7rem;font-weight:700;color:#667085;text-transform:uppercase;'
                 f'letter-spacing:.09em;margin-bottom:14px;">Queue Status'
                 f'<span style="font-weight:400;color:#667085;margin-left:10px;text-transform:none;">'
-                f'{_qdepth} message{"s" if _qdepth!=1 else ""} in SQS</span></div>',
+                f'{_qdepth} document{"s" if _qdepth!=1 else ""} awaiting processing</span></div>',
                 unsafe_allow_html=True)
             _status_colors = {
                 "QUEUED":     ("#FFFAEB","#F79009","⏳"),
@@ -1102,16 +1101,21 @@ with t4:
                     if refs:
                         st.markdown('<div class="kv-l">Policy References</div>'+"".join(f'<div class="policy-ref">· {r}</div>' for r in refs), unsafe_allow_html=True)
 
-                s3u = result.get("s3_url"); s3k = result.get("s3_key")
-                if s3u:
-                    st.markdown(
-                        f'<div style="margin:0 0 8px;padding:8px 14px;background:#F9FAFB;border:1px solid #E5E7EB;'
-                        f'border-radius:8px;display:flex;align-items:center;gap:8px;font-size:.78rem;">'
-                        f'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1570EF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'
-                        f'<span style="color:#16B364;font-weight:600;">S3</span>'
-                        f'<a href="{s3u}" target="_blank" style="color:#1570EF;font-family:monospace;word-break:break-all;">{s3k}</a>'
-                        f'</div>',
-                        unsafe_allow_html=True)
+                s3k = result.get("s3_key")
+                if s3k:
+                    try:
+                        _pdf_link = get_presigned_url(s3k, expires_in=3600)   # signed, time-limited
+                    except Exception:
+                        _pdf_link = None
+                    if _pdf_link:
+                        st.markdown(
+                            f'<div style="margin:0 0 8px;padding:8px 14px;background:#F9FAFB;border:1px solid #E5E7EB;'
+                            f'border-radius:8px;display:flex;align-items:center;gap:8px;font-size:.78rem;">'
+                            f'<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#1570EF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'
+                            f'<span style="color:#16B364;font-weight:600;">Document</span>'
+                            f'<a href="{_pdf_link}" target="_blank" style="color:#1570EF;font-weight:600;">View original PDF</a>'
+                            f'</div>',
+                            unsafe_allow_html=True)
                 st.markdown('</div>', unsafe_allow_html=True)  # close case-body
 
                 # Footer with actions
@@ -1188,7 +1192,7 @@ with t5:
                 '<div style="font-size:.72rem;font-weight:700;color:#16B364;text-transform:uppercase;'
                 'letter-spacing:.09em;margin:4px 0 0;">✨ AI Expense Summary</div>'
                 '<div style="font-size:.8rem;color:#667085;margin-top:2px;">'
-                'Natural-language executive overview generated by the Summary Agent (Groq LLM).</div>',
+                'An AI-generated executive overview of your processed expenses.</div>',
                 unsafe_allow_html=True)
         with sb:
             _gen = st.button("✨ Generate", key="gen_summary", use_container_width=True, type="primary")
