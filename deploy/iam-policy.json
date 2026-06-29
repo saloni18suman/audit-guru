@@ -9,7 +9,7 @@
         "ssm:GetParameter",
         "ssm:GetParameters"
       ],
-      "Resource": "arn:aws:ssm:*:*:parameter/anomaguard/*"
+      "Resource": "arn:aws:ssm:*:*:parameter/audit-guru/*"
     },
     {
       "Sid": "InvoiceBucket",
@@ -23,8 +23,8 @@
         "s3:HeadBucket"
       ],
       "Resource": [
-        "arn:aws:s3:::anomaguard-invoices",
-        "arn:aws:s3:::anomaguard-invoices/*"
+        "arn:aws:s3:::audit-guru-invoices",
+        "arn:aws:s3:::audit-guru-invoices/*"
       ]
     },
     {
@@ -38,7 +38,7 @@
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage"
       ],
-      "Resource": "arn:aws:sqs:*:*:anomaguard-jobs"
+      "Resource": "arn:aws:sqs:*:*:audit-guru-jobs"
     },
     {
       "Sid": "ResultTables",

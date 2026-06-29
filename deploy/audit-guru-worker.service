@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=ec2-user
-WorkingDirectory=/home/ec2-user/anomaguard
+WorkingDirectory=/home/ec2-user/audit-guru
 Environment=AWS_REGION=us-east-1
-ExecStart=/home/ec2-user/anomaguard/venv/bin/python queue_worker.py
+ExecStart=/home/ec2-user/audit-guru/venv/bin/python queue_worker.py
 Restart=always
 RestartSec=5
 

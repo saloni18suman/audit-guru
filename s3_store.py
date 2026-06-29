@@ -11,7 +11,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 _ENDPOINT   = os.environ.get("S3_ENDPOINT_URL") or None   # None → real AWS
-_BUCKET     = os.environ.get("S3_BUCKET_NAME",  "anomaguard-invoices")
+_BUCKET     = os.environ.get("S3_BUCKET_NAME",  "audit-guru-invoices")
 _REGION     = os.environ.get("AWS_REGION",       "us-east-1")
 _ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY_ID")     or None
 _SECRET_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY") or None

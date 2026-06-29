@@ -68,7 +68,7 @@ FAISS · sentence-transformers · AWS S3 / SQS / DynamoDB / SSM · boto3 · Plot
             │ upload → S3 + enqueue              │ read results
             ▼                                    ▼
        SQS queue  ──poll──▶  Queue Worker     DynamoDB
-   (anomaguard-jobs)        (queue_worker.py)  ├─ audit-invoices
+   (audit-guru-jobs)        (queue_worker.py)  ├─ audit-invoices
                                   │             └─ audit-trail
                                   ▼
             ┌───────── LangGraph Pipeline (pipeline.py) ─────────┐
@@ -93,7 +93,7 @@ For local development you can point S3/SQS/DynamoDB at LocalStack via the
 ## Project Structure
 
 ```
-anomaguard/
+audit-guru/
 ├── app.py                       # Streamlit frontend (5 tabs, role-based auth)
 ├── pipeline.py                  # LangGraph pipeline (OCR → Validation → Audit)
 ├── queue_worker.py              # SQS consumer: runs the pipeline, writes results
@@ -181,7 +181,7 @@ so the numbers are always correct and the model never does arithmetic.
 **S3** (`s3_store.py`) — invoice PDFs under `invoices/YYYY-MM-DD/<uuid>_<file>`; presigned
 URLs power the in-app PDF preview.
 
-**SQS** (`sqs_queue.py`) — `anomaguard-jobs` decouples upload from processing.
+**SQS** (`sqs_queue.py`) — `audit-guru-jobs` decouples upload from processing.
 
 Tables, bucket, and queue are auto-created on first use if missing.
 
@@ -225,7 +225,7 @@ exercised end-to-end. (Both require `reportlab`, included in `requirements.txt`.
 ## Configuration
 
 All config lives in `.env` locally (copy `.env.example`) or in **SSM Parameter Store**
-under `/anomaguard/*` on EC2 (`config.py` loads SSM first, then validates).
+under `/audit-guru/*` on EC2 (`config.py` loads SSM first, then validates).
 
 | Variable | Required | Description |
 |---|---|---|
@@ -235,9 +235,9 @@ under `/anomaguard/*` on EC2 (`config.py` loads SSM first, then validates).
 | `APP_NAME` | `AnomaGuard` | Display name |
 | `AWS_REGION` | `us-east-1` | AWS region |
 | `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | — | Local dev only; omit on EC2 (IAM role) |
-| `S3_BUCKET_NAME` | `anomaguard-invoices` | Invoice PDF bucket |
+| `S3_BUCKET_NAME` | `audit-guru-invoices` | Invoice PDF bucket |
 | `DYNAMODB_TABLE_NAME` | `audit-invoices` | Results table |
-| `SQS_QUEUE_NAME` | `anomaguard-jobs` | Job queue |
+| `SQS_QUEUE_NAME` | `audit-guru-jobs` | Job queue |
 | `*_ENDPOINT_URL` | — | Optional LocalStack endpoints for local dev |
 | `ADMIN_PASSWORD` / `REVIEWER_PASSWORD` / `VIEWER_PASSWORD` | dev defaults | App login passwords |
 
@@ -288,8 +288,8 @@ Open `http://localhost:8501` and sign in as `admin` / `admin123`.
 See **[DEPLOY.md](DEPLOY.md)** for the full guide: IAM role
 ([`deploy/iam-policy.json`](deploy/iam-policy.json)), SSM parameters, S3/SQS/DynamoDB,
 and the two **systemd** services
-([`deploy/anomaguard-web.service`](deploy/anomaguard-web.service),
-[`deploy/anomaguard-worker.service`](deploy/anomaguard-worker.service)) installed by
+([`deploy/audit-guru-web.service`](deploy/audit-guru-web.service),
+[`deploy/audit-guru-worker.service`](deploy/audit-guru-worker.service)) installed by
 [`deploy/setup-ec2.sh`](deploy/setup-ec2.sh).
 
 ---

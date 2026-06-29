@@ -744,7 +744,7 @@ with t2:
         """, unsafe_allow_html=True)
 
         s3_ok = s3_available()
-        s3_bucket = os.environ.get("S3_BUCKET_NAME", "anomaguard-invoices")
+        s3_bucket = os.environ.get("S3_BUCKET_NAME", "audit-guru-invoices")
         if s3_ok:
             st.markdown(
                 f'<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;'

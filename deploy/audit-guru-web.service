@@ -5,11 +5,11 @@ After=network.target
 [Service]
 Type=simple
 User=ec2-user
-WorkingDirectory=/home/ec2-user/anomaguard
+WorkingDirectory=/home/ec2-user/audit-guru
 # Config is pulled from SSM Parameter Store via the instance IAM role (see config.py).
 # Only the region needs to be set in the environment.
 Environment=AWS_REGION=us-east-1
-ExecStart=/home/ec2-user/anomaguard/venv/bin/streamlit run app.py \
+ExecStart=/home/ec2-user/audit-guru/venv/bin/streamlit run app.py \
     --server.port=8501 --server.address=0.0.0.0 --server.headless=true
 Restart=always
 RestartSec=5
