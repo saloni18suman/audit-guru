@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import load_config
 load_config()
 from db import init_db, load_all_results, save_review, save_corrections, get_audit_trail, save_queued_job
-from s3_store import upload_invoice, get_presigned_url, is_available as s3_available
+from s3_store import upload_invoice, get_presigned_url
 from sqs_queue import send_job, queue_depth
 from agents.summary_agent import run_summary_agent
 from report_pdf import build_report_pdf
@@ -1232,6 +1232,7 @@ with t5:
                     "↓ Download Summary", _summ["narrative"].encode(),
                     "expense_summary.md", "text/markdown", key="dl_summary")
 
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         st.divider()
         for section, items, col in [("✅ Approved",approved_l,"#05603A"),("❌ Rejected",rejected_l,"#912018"),("⏳ Pending Review",pending_l,"#B54708")]:
             if not items: continue

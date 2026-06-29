@@ -153,7 +153,7 @@ Loads `data/expense_policy.txt`, builds a FAISS index with sentence-transformers
 (`all-MiniLM-L6-v2`), cached on first run. `get_policy_context(query, k=4)` returns the
 top policy chunks injected into the Audit Agent prompt.
 
----
+### 4. Summarization Agent — `agents/summarization_agent.py`
 
 ## AI Expense Summarization
 
@@ -167,7 +167,7 @@ so the numbers are always correct and the model never does arithmetic.
 - Surfaced in the **Reports** tab via the “✨ Generate” button, with metric chips and a
   downloadable `expense_summary.md`.
 
----
+**File:** `app.py` · **Framework:** Streamlit · **URL:** `http://localhost:8501`
 
 ## Data Storage (AWS)
 
@@ -185,9 +185,15 @@ URLs power the in-app PDF preview.
 
 Tables, bucket, and queue are auto-created on first use if missing.
 
----
+### Tab 5 — Reports
 
-## Frontend
+- **KPI bar** + CSV/XLSX export
+- **AI Executive Summary** — Groq-generated narrative (on-demand button)
+- **Vendor Summary** — spend, invoice count, approved/rejected/flagged per vendor
+- **Category Summary** — spend, %, avg invoice per category
+- **Monthly Summary** — spend and flag count grouped by invoice month
+- **Exception Summary** — amount at risk, high-risk exposure, violation type breakdown table
+- **Invoice list** by status (Approved / Rejected / Pending)
 
 `app.py` · Streamlit · `http://localhost:8501`. Role-based login (Admin / Reviewer /
 Viewer; defaults in `app.py`, override via env/SSM).
@@ -221,7 +227,7 @@ exercised end-to-end. (Both require `reportlab`, included in `requirements.txt`.
 All config lives in `.env` locally (copy `.env.example`) or in **SSM Parameter Store**
 under `/audit-guru/*` on EC2 (`config.py` loads SSM first, then validates).
 
-| Variable | Default | Description |
+| Variable | Required | Description |
 |---|---|---|
 | `GROQ_API_KEY` | — | **Required.** Groq API key |
 | `GROQ_MODEL` | `llama-3.3-70b-versatile` | Model for OCR, Audit, Summary agents |
