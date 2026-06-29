@@ -1,0 +1,10 @@
+# Fieldguide-inspired light theme: white content, charcoal text, emerald-green accent.
+# Pinned so native widgets (st.metric, st.markdown, inputs) render correctly regardless
+# of the viewer's browser/OS dark-mode setting.
+[theme]
+base = "light"
+primaryColor = "#16B364"
+backgroundColor = "#F9FAFB"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#111827"
+font = "sans serif"
