@@ -79,6 +79,8 @@ section[data-testid="stMain"]>.block-container{padding:0 !important;}
 [data-testid="stMarkdownContainer"]{color:#111827;}
 
 /* ── Inputs ── */
+/* Hide Streamlit's "Press Enter to submit form" hint (it overlaps the password eye icon) */
+[data-testid="InputInstructions"]{display:none !important;}
 .stTextArea textarea{background:#F9FAFB;border:1px solid #E5E7EB;border-radius:8px;color:#111827;font-size:.875rem;}
 .stProgress>div>div{background:#16B364 !important;border-radius:6px;}
 .stProgress>div{background:#E5E7EB !important;border-radius:6px;height:12px !important;}
