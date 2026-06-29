@@ -7,7 +7,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from config import load_config
 load_config()
 from db import init_db, load_all_results, save_review, save_corrections, get_audit_trail, save_queued_job
-from s3_store import upload_invoice, get_presigned_url
+from s3_store import upload_invoice, get_presigned_url, is_available as s3_available
 from sqs_queue import send_job, queue_depth
 from agents.summary_agent import run_summary_agent
 from report_pdf import build_report_pdf
