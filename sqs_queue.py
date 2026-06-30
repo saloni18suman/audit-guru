@@ -19,7 +19,7 @@ _ACCESS_KEY = os.environ.get("AWS_ACCESS_KEY_ID")     or None
 _SECRET_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY") or None
 _ENDPOINT   = os.environ.get("SQS_ENDPOINT_URL") or None
 
-_CFG = Config(connect_timeout=5, read_timeout=10, retries={"max_attempts": 3})
+_CFG = Config(connect_timeout=5, read_timeout=30, retries={"max_attempts": 3})
 
 _queue_url_cache: str | None = None
 

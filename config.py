@@ -10,6 +10,8 @@ import os
 import boto3
 from dotenv import load_dotenv
 
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 SSM_PREFIX = "/audit-guru"
@@ -25,7 +27,10 @@ _REQUIRED = [
 
 def _load_from_ssm() -> bool:
     try:
-        ssm = boto3.client("ssm", region_name=os.environ.get("AWS_REGION", "us-east-1"))
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
+        if not region:
+            raise RuntimeError("AWS_REGION or AWS_DEFAULT_REGION must be set")
+        ssm = boto3.client("ssm", region_name=region)
         paginator = ssm.get_paginator("get_parameters_by_path")
         for page in paginator.paginate(Path=SSM_PREFIX, WithDecryption=True):
             for param in page["Parameters"]:
