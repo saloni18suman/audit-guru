@@ -432,6 +432,14 @@ if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = 0
 
 rs     = st.session_state.results
+
+# Global auto-refresh — works on any tab while jobs are in flight
+if any(r.get("queue_status") in ("QUEUED", "PROCESSING") for r in rs):
+    import time
+    time.sleep(4)
+    st.session_state.results = load_all_results()
+    st.rerun()
+
 rs_done = [r for r in rs if r.get("queue_status","DONE") == "DONE"]   # exclude QUEUED/PROCESSING
 approved_n = sum(1 for r in rs_done if r.get("audit",{}).get("audit_status")=="APPROVED" or r.get("review_decision")=="APPROVED")
 rejected_n = sum(1 for r in rs_done if r.get("audit",{}).get("audit_status")=="REJECTED" or r.get("review_decision")=="REJECTED")
@@ -704,19 +712,50 @@ with t2:
             st.toast(_toast_msg, icon="✅")
         _banner = st.session_state.get("upload_banner")
         if _banner:
-            _names = ", ".join(_banner)
-            st.markdown(
-                f'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;'
-                f'padding:12px 18px;background:#ECFDF3;border:1px solid #A6F4C5;border-left:4px solid #12B76A;'
-                f'border-radius:0 10px 10px 0;margin-bottom:18px;">'
-                f'<div style="font-size:.9rem;color:#027A48;">'
-                f'<strong>✅ {len(_banner)} invoice{"s" if len(_banner)!=1 else ""} queued for processing.</strong>'
-                f'<span style="color:#475467;"> &nbsp;{_names}. Track progress below, then view results in the '
-                f'<strong>Invoices</strong> tab.</span></div></div>',
-                unsafe_allow_html=True)
-            if st.button("Dismiss", key="dismiss_banner", type="secondary"):
-                st.session_state.pop("upload_banner", None)
-                st.rerun()
+            _still_running = any(r.get("queue_status") in ("QUEUED","PROCESSING") for r in st.session_state.results)
+            if _still_running:
+                # Jobs still in flight — show queued message
+                _names = ", ".join(_banner)
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;'
+                    f'padding:12px 18px;background:#ECFDF3;border:1px solid #A6F4C5;border-left:4px solid #12B76A;'
+                    f'border-radius:0 10px 10px 0;margin-bottom:18px;">'
+                    f'<div style="font-size:.9rem;color:#027A48;">'
+                    f'<strong>⏳ {len(_banner)} invoice{"s" if len(_banner)!=1 else ""} queued for processing.</strong>'
+                    f'<span style="color:#475467;"> &nbsp;{_names}. Track progress below.</span></div></div>',
+                    unsafe_allow_html=True)
+            else:
+                # All done — show result message based on audit outcome
+                _done_results = [
+                    r for r in st.session_state.results
+                    if r.get("filename") in _banner and r.get("queue_status") == "DONE"
+                ]
+                _errors = [r for r in st.session_state.results if r.get("filename") in _banner and r.get("queue_status") == "ERROR"]
+                _needs_review = [r for r in _done_results if r.get("audit",{}).get("audit_status") == "NEEDS_REVIEW"]
+
+                if _errors:
+                    st.error(f"❌ {len(_errors)} invoice(s) failed processing. Check the queue panel below.")
+                elif _needs_review:
+                    st.markdown(
+                        f'<div style="padding:12px 18px;background:#FFFAEB;border:1px solid #FEC84B;'
+                        f'border-left:4px solid #F79009;border-radius:0 10px 10px 0;margin-bottom:18px;">'
+                        f'<div style="font-size:.9rem;color:#B54708;">'
+                        f'<strong>⚠️ Processing complete — {len(_needs_review)} invoice{"s" if len(_needs_review)!=1 else ""} flagged for review.</strong>'
+                        f'<span style="color:#475467;"> Head to the <strong>Review Queue</strong> tab to approve or reject.</span>'
+                        f'</div></div>',
+                        unsafe_allow_html=True)
+                else:
+                    st.markdown(
+                        f'<div style="padding:12px 18px;background:#ECFDF3;border:1px solid #A6F4C5;'
+                        f'border-left:4px solid #12B76A;border-radius:0 10px 10px 0;margin-bottom:18px;">'
+                        f'<div style="font-size:.9rem;color:#027A48;">'
+                        f'<strong>✅ Processing complete — {len(_done_results)} invoice{"s" if len(_done_results)!=1 else ""} audited successfully.</strong>'
+                        f'<span style="color:#475467;"> View results in the <strong>Invoices</strong> tab.</span>'
+                        f'</div></div>',
+                        unsafe_allow_html=True)
+                if st.button("Dismiss", key="dismiss_banner", type="secondary"):
+                    st.session_state.pop("upload_banner", None)
+                    st.rerun()
         if st.session_state.get("upload_failed"):
             st.error("Failed to queue: " + "; ".join(st.session_state.pop("upload_failed")))
 
